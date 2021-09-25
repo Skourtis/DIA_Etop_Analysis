@@ -1,0 +1,6 @@
+Datasets/Raw/*.txt
+Datasets/Raw/*.dat
+Datasets/Raw/*.zip
+Datasets/Raw/*.csv
+Datasets/Raw/*.RData
+Datasets/Raw/*.tsv
