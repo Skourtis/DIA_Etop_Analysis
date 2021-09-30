@@ -24,18 +24,20 @@ Load_DIA_NN_Data <- function(report_DIA_tsv_file, Samples_df){
                     arrange(n) %>% tail(1) %>% dplyr::select(-n)
             }}
         return(input_df)}
-        
     read_tsv(here::here("Datasets","Raw",report_DIA_tsv_file)) %>% 
         as.data.frame() %>% 
-        subset(PG.Q.Value<= 0.01 & Q.Value <= 0.01 ) %>% janitor::clean_names() %>% 
+        subset(Lib.Q.Value<= 0.01 & Lib.PG.Q.Value <= 0.01 ) %>% janitor::clean_names() %>% 
         dplyr::select(matches("pg_max_lfq|run|protein_group|^genes$")) %>% 
         distinct() %>% janitor::clean_names() %>% 
         mutate(old_pg =protein_group) %>%  
         subset(!str_detect(protein_group,paste0(contaminant_uniprots,collapse = "|"))) %>% 
         remove_rownames() %>%
-        mutate(run = str_match(run,"-([:graph:]{6})-")[,2]) %>% 
-        left_join(Samples) %>% 
-        pivot_wider(-run, names_from = Condition ,values_from = pg_max_lfq) %>%
+        
+        mutate(run = str_replace_all(run, c("P11690-1" = "P11591-1",
+                                            "P11690-2" = "P11592-1",
+                                            "P11690-3" = "P11593-1")),
+               run = str_match(run,"-([:graph:]{6})-")[,2] %>% tolower()) %>%  left_join(Samples_df) %>%  
+        pivot_wider(-run, names_from = Condition ,values_from = pg_max_lfq) %>% 
         group_split(protein_group) %>%
         map_dfr(.x = .,~.x %>% discard_uniprot_isoforms("protein_group","genes" )) %>%
         group_by(protein_group) %>%
@@ -53,8 +55,9 @@ Load_DIA_NN_Data <- function(report_DIA_tsv_file, Samples_df){
 
 DEP_DIA <- function(input_matrix,dataset_name){
     #this required a not normalised and not logged matrix with column names of condition in _rep format
-    dataset_name = "Method1_P11833_41"
-    input_matrix <-  Method1_P11833_41
+    #dataset_name = "Method2_P11833_w_old"
+    #input_matrix <-  Method2_P11833_41 %>% as.data.frame()
+    input_matrix <- input_matrix %>% as.data.frame()
     experimental_design_DIA <-  data.frame(
         label = colnames(input_matrix),
         condition =  str_remove_all(colnames(input_matrix),"_[:graph:]*$"),
@@ -78,11 +81,23 @@ DEP_DIA <- function(input_matrix,dataset_name){
     ggsave(here::here(output_folder,glue::glue("Protein_numbers ",dataset_name,".png")))
     plot_coverage(data_filt)
     data_filt@assays@data@listData[[1]][is.nan(data_filt@assays@data@listData[[1]])] <- NA 
+    png(here::here(output_folder,glue::glue("Protein_Missingness ",dataset_name,".png")), width = 2500, height = 3800,res  =300) 
+    plot_missval(data_filt)
+    dev.off()
     data_norm <- normalize_vsn(data_filt)
     plot_normalization(data_se, data_norm)+ggtitle(glue::glue("Protein_norm ",dataset_name))
     ggsave(here::here(output_folder,glue::glue("Protein_normalisation ",dataset_name,".png")))
+    
+    # edata = data_norm@assays@data@listData[[1]] %>% na.omit()
+    # batch = if_else(str_match(colnames(data_norm@assays@data@listData[[1]]),"_(.)$")[,2] %>% as.numeric() <4,2,1)
+    
+    # parametric adjustment
+    # combat_edata1 = ComBat(dat=edata, batch=batch, mod=NULL, par.prior=TRUE, prior.plots=FALSE)
+    
+    # pca_res <- prcomp(combat_edata2  %>% na.omit() %>% t(), scale=TRUE) 
     #plot_missval(data_filt)
     # Impute missing data using random draws from a Gaussian distribution centered around a minimal value (for MNAR)
+    
     pca_res <- prcomp(data_norm@assays@data@listData[[1]]  %>% na.omit() %>% t(), scale=TRUE)
     var_explained <- pca_res$sdev^2/sum(pca_res$sdev^2)
     
@@ -98,11 +113,13 @@ DEP_DIA <- function(input_matrix,dataset_name){
         theme(legend.position="top") +
         ggtitle(dataset_name)+ 
         theme(plot.title = element_text(size = 20))
-    ggsave(here::here("Project_Output","Etop_DIA_EC_106M955",glue::glue(dataset_name," PCA.png")))
+    ggsave(here::here(output_folder,glue::glue(dataset_name," PCA.png")))
     
     if(data_norm@assays@data@listData[[1]] %>% is.na() %>% any()){
+        png(here::here(output_folder,glue::glue("Protein_Missingness_Abundance ",dataset_name,".png")), width = 2500, height = 3800,res  =300) 
         plot_detect(data_norm)
-        ggsave(here::here(output_folder,glue::glue("Protein_missingness ",dataset_name,".png")))
+        dev.off()
+        #ggsave(here::here(output_folder,glue::glue("Protein_missingness ",dataset_name,".png")))
         data_imp <- impute(data_norm, fun = "MinProb", q = 0.01)
     }else{
         data_imp <- data_norm
@@ -110,9 +127,10 @@ DEP_DIA <- function(input_matrix,dataset_name){
     plot_imputation(data_norm, data_imp)
     ggsave(here::here(output_folder,glue::glue("Protein_imputted ",dataset_name,".png")))
     data_diff_all_contrasts <- DEP::test_diff(data_imp, type = "all")
-    dep <- add_rejections(data_diff_all_contrasts, alpha = 0.01, lfc = log2(1))
-    plot_cor(dep, significant = FALSE, lower = 0, upper = 1, pal = "Reds")
-    ggsave(here::here(output_folder,glue::glue("Sample_correlation ",dataset_name,".png")))
+    dep <- add_rejections(data_diff_all_contrasts, alpha = 0.05, lfc = log2(1))
+    
+    #plot_cor(dep, significant = FALSE, lower = 0, upper = 1, pal = "Reds")
+    #ggsave(here::here(output_folder,glue::glue("Sample_correlation ",dataset_name,".png")))
     #plot_volcano(dep, contrast = "T0_vs_T24", label_size = 2, add_names = TRUE)
     # plot_heatmap(dep, type = "centered", kmeans = TRUE, 
     #              k = 6, col_limit = 4, show_row_names = FALSE,
@@ -127,17 +145,18 @@ DEP_DIA <- function(input_matrix,dataset_name){
         left_join(Interesting_proteins) %>% 
         subset(!is.na(Behaviour)) %>% 
         pivot_longer(contains("_"), names_to = "Condition", values_to = "Abundance") %>% 
-        mutate(Condition= factor(Condition, levels= paste(rep(c("DMSO","T0","T24"), each= 3), rep(1:3,3),sep="_"))) %>% 
+        mutate(Condition= factor(Condition)) %>% 
         group_by(ProteinGroup) %>% pivot_wider(names_from = "Condition",values_from = Abundance) %>% 
-        mutate(DMSO = mean(c(DMSO_1,DMSO_2,DMSO_3))) %>% mutate(across(where(is.numeric), ~.x-DMSO)) %>%
+        mutate(DMSO = mean(c_across(contains("dmso")), na.rm = T)) %>% 
+        mutate(across(where(is.numeric), ~.x-DMSO)) %>%
         dplyr::select(-DMSO) %>% pivot_longer(contains("_"), names_to = "Condition", values_to = "Abundance") %>% 
         left_join(dep@elementMetadata$significant %>% set_names(dep@elementMetadata$name) %>% enframe(name = "ProteinGroup", "Significant")) %>% 
         ggplot(aes(x = Condition, y  = Abundance, colour = ProteinGroup,group= ProteinGroup, label = ID, alpha= Significant))+
         geom_line()+
         geom_point()+
         scale_alpha_manual(values = c(0.3,1))+
-        ggrepel::geom_label_repel(data = . %>% subset(Condition == "T24_3" & Significant == T))+
-        ggrepel::geom_label_repel(data = . %>% subset(Condition == "T24_3" & Significant == F))+
+        ggrepel::geom_label_repel(data = . %>% subset(Condition == tail(experimental_design_DIA$label,1) & Significant == T))+
+        ggrepel::geom_label_repel(data = . %>% subset(Condition == tail(experimental_design_DIA$label,1) & Significant == F))+
         theme(legend.position = "none") +
         facet_wrap("Behaviour")+ 
         scale_x_discrete(guide = guide_axis(n.dodge = 2))+
@@ -174,8 +193,8 @@ DEP_DIA <- function(input_matrix,dataset_name){
         subset(!is.na(ID)) %>% 
         column_to_rownames("ID") %>%
         dplyr::select(where(is.numeric)) %>%
-        mutate(across(where(is.numeric),~.x- DMSO)) %>% 
-        dplyr::select(-DMSO) %>% 
+        mutate(across(where(is.numeric),~.x- dmso)) %>% 
+        dplyr::select(-dmso) %>% 
         as.matrix() 
     paletteLength <- 50
     myColor <- colorRampPalette(c("blue", "white", "red"))(paletteLength)
@@ -188,11 +207,12 @@ DEP_DIA <- function(input_matrix,dataset_name){
     pheatmap::pheatmap(Significant_proteins,cluster_cols = F,fontsize_row = 6, clustering_distance_rows = "euclidean", 
                        main = glue::glue(dataset_name, " Significant Proteins Normalised to DMSO"),color=myColor, breaks=myBreaks)
     dev.off()
+    if(names(dev.cur()) != "RStudioGD"){dev.off()}
     #clusters <- NbClust::NbClust(Significant_proteins, method = "kmeans")$Best.partition
     
     Comparisons_list <- list()
     for(i in (dep@elementMetadata %>% names() %>% str_subset("diff") )){
-        #i = "T0_vs_T24_diff"
+        #i = (dep@elementMetadata %>% names() %>% str_subset("diff"))[2]
         contrast <- str_remove_all(i,"_diff")
         
         volcano_df <-  data.frame(log2_FC = dep@elementMetadata %>%  .[(glue::glue(contrast,"_diff"))] %>% unlist(),
@@ -216,7 +236,7 @@ DEP_DIA <- function(input_matrix,dataset_name){
             ggplot(aes(x = log2_FC, y = -log10(p.val), label = ID, colour = Behaviour))+
             geom_point()+
             #ggrepel::geom_label_repel(data = . %>% subset(significant == T&  is.na(Behaviour)))+
-            ggrepel::geom_label_repel(data = . %>% subset(!is.na(Behaviour)), max.overlaps = 50)+
+            ggrepel::geom_label_repel(data = . %>% subset(!is.na(Behaviour) & p.adj<0.05), max.overlaps = 100)+
             ggtitle(glue::glue("Diff Present on Chromatin POI ", contrast),
                     subtitle = dataset_name)
         Comparisons_list[[i]] <- volcano_df
@@ -235,7 +255,7 @@ DEP_DIA <- function(input_matrix,dataset_name){
         # if(!is.null(ego3)){
         #     ridgeplot(ego3 %>% simplify(), showCategory = 68)+
         #         ggtitle(glue::glue(dataset_name," MF-GSEA",i))
-        #     ggsave(here::here("Project_Output","Etop_DIA_EC_106M955", glue::glue(i," ",dataset_name," MF-GSEA.png")), height = 20, width  = 15)}
+        #     ggsave(here::here(output_folder, glue::glue(i," ",dataset_name," MF-GSEA.png")), height = 20, width  = 15)}
         # ego3 <- gseGO(geneList     = dep@elementMetadata %>% .[i] %>% unlist %>% set_names(dep@elementMetadata$name) %>% sort(decreasing = T),
         #               OrgDb        = org.Hs.eg.db,
         #               ont          = "BP",
@@ -249,9 +269,75 @@ DEP_DIA <- function(input_matrix,dataset_name){
         # 
         #     ridgeplot(ego3 %>% simplify(), showCategory = 68)+
         #         ggtitle(glue::glue(dataset_name,"BP-GSEA",i))
-        #     ggsave(here::here("Project_Output","Etop_DIA_EC_106M955", glue::glue(i," ",dataset_name," BP-GSEA.png")), height = 20, width  = 15)}
+        #     ggsave(here::here(output_folder, glue::glue(i," ",dataset_name," BP-GSEA.png")), height = 20, width  = 15)}
     }
     
-    return(set_names(Comparisons_list, dep@elementMetadata %>% names() %>% str_subset("diff")))
+    data_imp@assays@data@listData[[1]] %>% as.data.frame() %>%  rownames_to_column("Uniprot") %>% 
+        #glimpse() %>% 
+        pivot_longer(-Uniprot,names_to = "Condition", values_to = "Abundance") %>% 
+        mutate(Condition = str_remove_all(Condition, "_.$")) %>% 
+        group_by(Condition,Uniprot) %>% 
+        summarise(Mean_Abundance = mean(Abundance, na.rm = T),
+                  Protein_CV = sd(Abundance, na.rm = F)/Mean_Abundance) %>% 
+        ggplot(aes(x = Mean_Abundance, y = Protein_CV))+
+        geom_point()+
+        facet_wrap("Condition")+
+        ggtitle("Coefficient of Variation in Conditions NAs in Sd retained",
+                subtitle = dataset_name)
+    ggsave(here::here(output_folder,glue::glue("CV_conditions_unimputted",dataset_name," ",contrast,".png")), width = 10, height = 15)
+    data_filt@assays@data@listData[[1]] %>% as.data.frame() %>%  rownames_to_column("Uniprot") %>% 
+        #glimpse() %>% 
+        pivot_longer(-Uniprot,names_to = "Condition", values_to = "Abundance") %>% 
+        mutate(Condition = str_remove_all(Condition, "_.$")) %>% 
+        group_by(Condition,Uniprot) %>% 
+        summarise(Mean_Abundance = mean(Abundance, na.rm = T),
+                  Protein_CV = sd(Abundance, na.rm = F)/Mean_Abundance) %>% 
+        ggplot(aes(x = Mean_Abundance, y = Protein_CV))+
+        geom_point()+
+        facet_wrap("Condition")+
+        ggtitle("Coefficient of Variation in Conditions NAs in Sd retained",
+                subtitle =  dataset_name)
+    ggsave(here::here(output_folder,glue::glue("CV_conditions_imputted",dataset_name," ",contrast,".png")), width = 10, height = 15)
+    
+    return(list(Imputted = data_imp@assays@data@listData[[1]],
+                Unimputted = data_filt@assays@data@listData[[1]], 
+                DEPs = set_names(Comparisons_list, dep@elementMetadata %>% names() %>% str_subset("diff"))))
 }
 
+PeCoRa_function <- function(DIA_report_file,Samples, control_condition = NULL){
+    #pacman::p_load(diann, PeCorA)
+    peptide_file <- read_tsv(here::here("Datasets","Raw",DIA_report_file)) 
+    
+    
+    peptides.maxlfq <- diann_maxlfq(peptide_file[peptide_file$Lib.Q.Value <= 0.01 & peptide_file$Lib.PG.Q.Value <= 0.01,], 
+                                    group.header="Stripped.Sequence",
+                                    id.header = "Precursor.Id", 
+                                    quantity.header = "Precursor.Normalised")
+    PepCorA_setup <- peptides.maxlfq %>% as.data.frame()%>% rownames_to_column("Peptide") %>% 
+        pivot_longer(-Peptide, names_to = "Condition_rep", values_to = "Normalised.Area") %>% 
+        #view()
+        mutate(run = str_match(Condition_rep,"-([:graph:]{6})-")[,2] %>% tolower()) %>% 
+        left_join(Samples %>% mutate(run = tolower(run))) %>% #glimpse() %>% 
+        separate(Condition, into = c("Condition","BioReplicate"), sep = "_") %>% 
+        left_join(peptide_file %>% as.data.frame() %>% dplyr::select(Modified.Sequence,Stripped.Sequence,Protein.Group) %>% distinct(),
+                  by = c("Peptide" = "Stripped.Sequence")) %>% as.data.frame() %>% mutate(Normalised.Area = replace_na(Normalised.Area,0)) %>% 
+        mutate(BioReplicate = as.numeric(BioReplicate)) %>% 
+        dplyr::rename(Protein=Protein.Group,
+                      Peptide.Modified.Sequence = Modified.Sequence)
+    area_column_name <- which(str_detect(testing_PepCorA %>% colnames(),"ormali"))
+    if(is.null(control_condition)){
+        control_condition <-PepCorA_setup$Condition[1]
+    }
+    scaled_peptides <- PeCorA_preprocessing(testing_PepCorA,
+                                            area_column_name = area_column_name,
+                                            threshold_to_filter = 100,
+                                            control_name = control_condition)
+    disagree_peptides <- PeCorA::PeCorA(scaled_peptides)
+    list(disagree_peptides = disagree_peptides,
+         scaled_peptides = scaled_peptides,
+         disagree_proteins = disagree_peptides %>% left_join(peptide_file %>% as.data.frame() %>% dplyr::select(Genes,Protein.Group) %>% distinct(),
+                                                             by = c("protein" = "Protein.Group")))
+    
+    
+    
+}

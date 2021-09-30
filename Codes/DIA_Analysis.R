@@ -1,6 +1,6 @@
 #### Etop DIA ####
 #### Loading####
-
+source(here::here("Codes","functions.R"))
 set.seed(1234)
 HUMAN_9606 <- read_tsv(here::here("Datasets","Raw", "HUMAN_9606_idmapping.dat"),
                        col_names = FALSE) %>% set_names(c("Uniprot","Type","ID"))
@@ -12,7 +12,7 @@ Sabatini <- openxlsx::read.xlsx(here::here("Datasets","Raw","metabolism_gene_lis
     pull(Gene.Symbol)
 Sabatini_Uniprot <- HUMAN_9606 %>% subset((ID %in% Sabatini) & Type == "Gene_Name") %>%
     subset(!duplicated(Uniprot)) %>% pull(Uniprot, ID)#%>% unique()
-output_folder = here::here("Output","Etop_DIA_EC_106M955")
+output_folder = here::here("Output","Etop_DIA_EC_two_methods")
 Hits_Joanna <- openxlsx::read.xlsx(here::here("Datasets","Raw",
                                               "Candidates_proteins.xlsx")) %>% pull(`71.genes`) %>% c("FDX2")
 Candidates_Joanna<-openxlsx::read.xlsx(here::here("Datasets","Raw",
@@ -69,8 +69,101 @@ Complexes <- read.delim(here::here("Datasets","Raw","coreComplexes.txt")) %>% su
 Complexes <- Complexes %>% str_split(";") %>% set_names(names(Complexes))
 #####
 DIA_report_file <- "P11833_P11841_Method_1_report.tsv"
+DIA_report_file_method2 <- "P11833_P11841_Method_2_report.tsv"
+DIA_report_file_method2_w_old <- "Method2_and_original_Etop_report.tsv"
+DIA_report_file_P11685 <- "P11685_Discovery_report.tsv"
+
 Samples <- data.frame(run=  c("P11833","P11834","P11835","P11836","P11837" ,"P11838","P11839","P11840" ,"P11841"),
-                      Condition = c("DMSO_1","DMSO_2","DMSO_3","0H_1", "0H_2","0H_3","24H_1", "24H_2" ,"24H_3")) %>% 
+                      Condition = c("DMSO_1","DMSO_2","DMSO_3","0H_1", "0H_2","0H_3","24H_1", "24H_2" ,"24H_3"))
+Samples_w_old <- data.frame(run=  c("p11591","p11592","p11593","p11685","p11688" ,"p11691","p11686","p11689" ,"p11692"),
+                      Condition = c("DMSO_4","DMSO_5","DMSO_6","0H_4", "0H_5","0H_6","24H_4", "24H_5" ,"24H_6")) %>% 
     mutate(Condition = janitor::make_clean_names(Condition))
 
-Method1_P11833_41 <- Load_DIA_NN_Data(DIA_report_file,Samples)
+
+Method1_P11833_41 <- Load_DIA_NN_Data(DIA_report_file,Samples%>% 
+                                          mutate(across(everything(),janitor::make_clean_names)))
+Method2_P11833_41 <- Load_DIA_NN_Data(DIA_report_file_method2,Samples)
+Method2_P11833_w_old <- Load_DIA_NN_Data(DIA_report_file_method2_w_old,rbind(Samples,Samples_w_old)%>% 
+                                             mutate(across(everything(),janitor::make_clean_names)))
+
+P11685 <- Load_DIA_NN_Data(DIA_report_file_P11685,Samples_w_old%>% 
+                                             mutate(across(everything(),janitor::make_clean_names)))
+
+Method1_P11833_41_DEP <- DEP_DIA(Method1_P11833_41,"Method1_P11833_41")
+Method2_P11833_41_DEP <- DEP_DIA(Method2_P11833_41,"Method2_P11833_41")
+Method2_P11833_41_DEP <- DEP_DIA(Method2_P11833_w_old,"Method2_P11833_w_old")
+P11685 <- DEP_DIA(P11685,"P11685")
+P11685$DEPs$x0h_vs_x24h_diff[,c("log2_FC","Uniprot", 'significant')] %>%
+    dplyr::rename(P11685_Log2_FC_24_vs_0 = log2_FC,
+                  significant_P11685 = significant) %>% 
+    inner_join(Method2_P11833_41_DEP$DEPs$x0h_vs_x24h_diff[,c("log2_FC","Uniprot", 'significant')] %>% 
+                   dplyr::rename(Method2_Log2_FC_24_vs_0 = log2_FC,
+                                 significant_method2 = significant)) %>% 
+    mutate(significant = case_when(
+        significant_method2 == T  & significant_P11685==T ~ "Both",
+        significant_method2 == T  & significant_P11685==F ~ "method2",
+        significant_method2 == F  & significant_P11685==T ~ "P11685",
+        significant_method2 == F  & significant_P11685==F ~ "neither"
+        
+    )) %>% 
+    ggplot(aes(x = P11685_Log2_FC_24_vs_0, y =  Method2_Log2_FC_24_vs_0,colour =  significant ))+
+    geom_point(alpha = 0.1, data = . %>% subset(significant == "neither"))+
+    geom_point(alpha = 1, data = . %>% subset(significant != "neither"))+
+    theme_bw()+
+    ggtitle("Correlation of Fold change between P11685 Samples and method 2 P11833 samples",
+            subtitle = "24hrs vs 0 hrs chromatin")
+    
+Method1_P11833_41_DEP$DEPs$x0h_vs_x24h_diff[,c("log2_FC","Uniprot")] %>%
+    dplyr::rename(Method1_Log2_FC_24_vs_0 = log2_FC) %>% 
+    inner_join(Method2_P11833_41_DEP$DEPs$x0h_vs_x24h_diff[,c("log2_FC","Uniprot")] %>% 
+                   dplyr::rename(Method2_Log2_FC_24_vs_0 = log2_FC)) %>% 
+    ggplot(aes(x = P11685_Log2_FC_24_vs_0, y =  Method2_Log2_FC_24_vs_0))+
+    geom_point()
+
+edata = Method2_P11833_41_DEP$Unimputted %>% na.omit()
+batch = if_else(str_match(colnames(Method2_P11833_41_DEP$Imputted),"_(.)$")[,2] %>% as.numeric() <4,2,1)
+
+
+# parametric adjustment
+combat_edata1 = ComBat(dat=edata, batch=batch, mod=NULL, par.prior=TRUE, prior.plots=FALSE)
+
+pca_res <- prcomp(combat_edata1  %>% na.omit() %>% t(), scale=TRUE) 
+#plot_missval(data_filt)
+# Impute missing data using random draws from a Gaussian distribution centered around a minimal value (for MNAR)
+
+var_explained <- pca_res$sdev^2/sum(pca_res$sdev^2)
+
+pca_res$x %>% 
+    as.data.frame %>%
+    rownames_to_column("Sample") %>% 
+    mutate(Condition = str_remove(Sample,"_.$")) %>% 
+    ggplot(aes(x=PC1,y=PC2, label = Sample, colour = Condition )) + geom_point(size=4) +
+    ggrepel::geom_label_repel()+
+    labs(x=paste0("PC1: ",round(var_explained[1]*100,1),"%"),
+         y=paste0("PC2: ",round(var_explained[2]*100,1),"%")) +
+    theme(legend.position="top") +
+    ggtitle(dataset_name)+ 
+    theme(plot.title = element_text(size = 20))
+
+Pecora_result <- PeCoRa_function(DIA_report_file, Samples)
+
+PeCorA::PeCorA_plotting(Pecora_result$disagree_peptides,Pecora_result$disagree_peptides[,],Pecora_result$scaled_peptides)
+row.names(testing) <- testing$peptide
+ego <- enrichGO(gene          = testing %>% subset(adj_pval<0.01) %>% pull(protein) %>% str_remove_all(";[:graph:]*$") %>% str_remove_all("-.") %>% unique(),
+                universe      = testing %>% pull(protein) %>% str_remove_all(";[:graph:]*$") %>% str_remove_all("-.")%>% unique(),
+                OrgDb         = org.Hs.eg.db,
+                ont           = "BP",
+                keyType = "UNIPROT",
+                pAdjustMethod = "BH",
+                pvalueCutoff  = 0.01,
+                qvalueCutoff  = 0.05,
+                readable      = TRUE)
+#enrichplot::upsetplot(ego %>% simplify(), n  = 20)
+dotplot(ego%>% simplify(), showCategory=30) + ggtitle("dotplot for ORA")
+hist(log2(df_input[, "Precursor.Normalised"]), 100, main = "Histogram of log2 intensities", 
+     col = "steelblue", border = "steelblue", freq = FALSE)
+
+
+
+
+
