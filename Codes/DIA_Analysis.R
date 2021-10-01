@@ -69,30 +69,31 @@ Complexes <- read.delim(here::here("Datasets","Raw","coreComplexes.txt")) %>% su
 Complexes <- Complexes %>% str_split(";") %>% set_names(names(Complexes))
 #####
 DIA_report_file <- "P11833_P11841_Method_1_report.tsv"
-DIA_report_file_method2 <- "P11833_P11841_Method_2_report.tsv"
-DIA_report_file_method2_w_old <- "Method2_and_original_Etop_report.tsv"
-DIA_report_file_P11685 <- "P11685_Discovery_report.tsv"
 
 Samples <- data.frame(run=  c("P11833","P11834","P11835","P11836","P11837" ,"P11838","P11839","P11840" ,"P11841"),
+                     
+                      
                       Condition = c("DMSO_1","DMSO_2","DMSO_3","0H_1", "0H_2","0H_3","24H_1", "24H_2" ,"24H_3"))
-Samples_w_old <- data.frame(run=  c("p11591","p11592","p11593","p11685","p11688" ,"p11691","p11686","p11689" ,"p11692"),
-                      Condition = c("DMSO_4","DMSO_5","DMSO_6","0H_4", "0H_5","0H_6","24H_4", "24H_5" ,"24H_6")) %>% 
-    mutate(Condition = janitor::make_clean_names(Condition))
 
 
 Method1_P11833_41 <- Load_DIA_NN_Data(DIA_report_file,Samples%>% 
-                                          mutate(across(everything(),janitor::make_clean_names)))
-Method2_P11833_41 <- Load_DIA_NN_Data(DIA_report_file_method2,Samples)
-Method2_P11833_w_old <- Load_DIA_NN_Data(DIA_report_file_method2_w_old,rbind(Samples,Samples_w_old)%>% 
-                                             mutate(across(everything(),janitor::make_clean_names)))
+                
+                                                                     mutate(across(everything(),janitor::make_clean_names)))
 
-P11685 <- Load_DIA_NN_Data(DIA_report_file_P11685,Samples_w_old%>% 
-                                             mutate(across(everything(),janitor::make_clean_names)))
+list_files_to_analyse <- list(DIA_report_file = "P11833_P11841_Method_1_report.tsv",
+                              DIA_report_file_method2 = "P11833_P11841_Method_2_report.tsv",
+                              DIA_report_file_method2_w_old = "Method2_and_original_Etop_report.tsv",
+                              DIA_report_file_P11685 = "P11685_Discovery_report.tsv")
 
-Method1_P11833_41_DEP <- DEP_DIA(Method1_P11833_41,"Method1_P11833_41")
-Method2_P11833_41_DEP <- DEP_DIA(Method2_P11833_41,"Method2_P11833_41")
-Method2_P11833_41_DEP <- DEP_DIA(Method2_P11833_w_old,"Method2_P11833_w_old")
-P11685 <- DEP_DIA(P11685,"P11685")
+Samples <- data.frame(run=  c("P11833","P11834","P11835","P11836","P11837" ,"P11838","P11839","P11840" ,"P11841",
+                              "p11591","p11592","p11593","p11685","p11688" ,"p11691","p11686","p11689" ,"p11692"),
+                      Condition = c("DMSO_1","DMSO_2","DMSO_3","0H_1", "0H_2","0H_3","24H_1", "24H_2" ,"24H_3",
+                                    "DMSO_4","DMSO_5","DMSO_6","0H_4", "0H_5","0H_6","24H_4", "24H_5" ,"24H_6"))
+
+DIA_matrices <- map(.x = list_files_to_analyse, 
+                    ~Load_DIA_NN_Data(.x,Samples%>% 
+                                          mutate(across(everything(),janitor::make_clean_names))))
+DIA_DEP <- map2(DIA_matrices,list_files_to_analyse,DEP_DIA)
 P11685$DEPs$x0h_vs_x24h_diff[,c("log2_FC","Uniprot", 'significant')] %>%
     dplyr::rename(P11685_Log2_FC_24_vs_0 = log2_FC,
                   significant_P11685 = significant) %>% 

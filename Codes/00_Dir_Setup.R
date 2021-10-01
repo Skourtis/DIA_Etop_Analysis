@@ -2,14 +2,15 @@
 ##Settting up directory
 # options(repos = getOption("repos")["CRAN"])
 # install.packages("PTXQC")
-install.packages("pacman")
+#install.packages("pacman")
 # if (!requireNamespace("BiocManager", quietly = TRUE))
     # install.packages("BiocManager")
 # remotes::install_github("vdemichev/diann-rpackage")
 # installr::updateR()
 # BiocManager::install("DEP")
 # remotes::install_github("demar01/PeCorA")
-pacman::p_load(piggyback, renv, here, tidyverse, targets, DEP,pheatmap,diann,PeCorA,sva,
+pacman::p_load(piggyback, renv, here, tidyverse, targets, DEP,pheatmap,diann,PeCorA,sva,imp4p,
+               org.Hs.eg.db,clusterProfiler,
                visNetwork,matrixStats,magick,testthat, openxlsx, janitor,seqinr)
 renv::init()
 #usethis::use_test()

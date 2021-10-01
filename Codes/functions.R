@@ -55,8 +55,8 @@ Load_DIA_NN_Data <- function(report_DIA_tsv_file, Samples_df){
 
 DEP_DIA <- function(input_matrix,dataset_name){
     #this required a not normalised and not logged matrix with column names of condition in _rep format
-    #dataset_name = "Method2_P11833_w_old"
-    #input_matrix <-  Method2_P11833_41 %>% as.data.frame()
+    dataset_name = "Method1_P11833_41"
+    input_matrix <-  Method1_P11833_41# DIA_matrices$DIA_report_file_P11685 %>% as.data.frame()
     input_matrix <- input_matrix %>% as.data.frame()
     experimental_design_DIA <-  data.frame(
         label = colnames(input_matrix),
@@ -121,13 +121,20 @@ DEP_DIA <- function(input_matrix,dataset_name){
         dev.off()
         #ggsave(here::here(output_folder,glue::glue("Protein_missingness ",dataset_name,".png")))
         data_imp <- impute(data_norm, fun = "MinProb", q = 0.01)
+        # to_impute <- data_norm@assays@data@listData[[1]] %>% subset(., rowSums(is.na(.))>1)
+        # to_not_impute <- data_norm@assays@data@listData[[1]] %>% subset(., rowSums(is.na(.))<2)
+        # multiple_imputation <- impute.mi(tab = to_impute,
+        #                                  conditions = experimental_design_DIA$condition %>% as.factor(),
+        #                                  repbio = experimental_design_DIA$replicate %>% as.factor()) 
+        # rownames(multiple_imputation) <- rownames(to_impute)
+        # data_imp@assays@data@listData[[1]] <-  rbind(to_not_impute,multiple_imputation) 
     }else{
         data_imp <- data_norm
     }
     plot_imputation(data_norm, data_imp)
     ggsave(here::here(output_folder,glue::glue("Protein_imputted ",dataset_name,".png")))
     data_diff_all_contrasts <- DEP::test_diff(data_imp, type = "all")
-    dep <- add_rejections(data_diff_all_contrasts, alpha = 0.05, lfc = log2(1))
+    dep <- add_rejections(data_diff_all_contrasts, alpha = 0.05, lfc = 0)
     
     #plot_cor(dep, significant = FALSE, lower = 0, upper = 1, pal = "Reds")
     #ggsave(here::here(output_folder,glue::glue("Sample_correlation ",dataset_name,".png")))
@@ -163,6 +170,31 @@ DEP_DIA <- function(input_matrix,dataset_name){
         ggtitle("Interesting DDR proteins Detected",
                 "Significant - opaque, non-significant Transparent")
     ggsave(here::here(output_folder,glue::glue("Known_Behaviour ",dataset_name,".png")), width = 20, height = 20)
+    data_norm@assays@data@listData[[1]] %>% 
+        as.data.frame() %>% 
+        rownames_to_column("ProteinGroup") %>% 
+        mutate(Uniprot= ProteinGroup %>% str_remove_all(";[:graph:]*$") %>% str_remove_all("-[:graph:]*$")) %>% 
+        left_join(HUMAN_9606 %>% subset(Type == "Gene_Name") %>% dplyr::select(-Type) %>% subset(!duplicated(Uniprot))) %>% 
+        pivot_longer(contains("_"), names_to = "Condition", values_to = "Abundance") %>% 
+        mutate(Condition= factor(Condition)) %>% 
+        group_by(ProteinGroup) %>% pivot_wider(names_from = "Condition",values_from = Abundance) %>% 
+        mutate(Samples_median = median(c_across(where(is.numeric)), na.rm = T)) %>%  
+        mutate(across(where(is.numeric), ~.x-Samples_median)) %>%
+        dplyr::select(-Samples_median) %>% pivot_longer(contains("_"), names_to = "Condition", values_to = "Abundance") %>% 
+        left_join(dep@elementMetadata$significant %>% set_names(dep@elementMetadata$name) %>% enframe(name = "ProteinGroup", "Significant")) %>% 
+        subset(Significant == T) %>%
+        ggplot(aes(x = Condition, y  = Abundance, colour = ProteinGroup,group= ProteinGroup, label = ID))+
+        #geom_line()+
+        geom_point()+
+        #scale_alpha_manual(values = c(0.3,1))+
+        #ggrepel::geom_label_repel(data = . %>% subset(Condition == tail(experimental_design_DIA$label,1) & Significant == T))+
+        #ggrepel::geom_label_repel(data = . %>% subset(Condition == tail(experimental_design_DIA$label,1) & Significant == F))+
+        theme(legend.position = "none") +
+        facet_wrap("ID")+ 
+        scale_x_discrete(guide = guide_axis(n.dodge = 2))+
+        ggtitle(glue::glue("Significant - Proteins",dataset_name))
+    ggsave(here::here(output_folder,glue::glue("Significant_proteins ",dataset_name,".png")), width = 20, height = 20)
+    
     
     Significant_proteins <- data_imp@assays@data@listData[[1]] %>% 
         as.data.frame() %>% 
@@ -207,12 +239,12 @@ DEP_DIA <- function(input_matrix,dataset_name){
     pheatmap::pheatmap(Significant_proteins,cluster_cols = F,fontsize_row = 6, clustering_distance_rows = "euclidean", 
                        main = glue::glue(dataset_name, " Significant Proteins Normalised to DMSO"),color=myColor, breaks=myBreaks)
     dev.off()
-    if(names(dev.cur()) != "RStudioGD"){dev.off()}
+    if(names(dev.cur()) != "null device"){dev.off()}
     #clusters <- NbClust::NbClust(Significant_proteins, method = "kmeans")$Best.partition
     
     Comparisons_list <- list()
     for(i in (dep@elementMetadata %>% names() %>% str_subset("diff") )){
-        #i = (dep@elementMetadata %>% names() %>% str_subset("diff"))[2]
+        i = (dep@elementMetadata %>% names() %>% str_subset("diff"))[3]
         contrast <- str_remove_all(i,"_diff")
         
         volcano_df <-  data.frame(log2_FC = dep@elementMetadata %>%  .[(glue::glue(contrast,"_diff"))] %>% unlist(),
@@ -243,33 +275,33 @@ DEP_DIA <- function(input_matrix,dataset_name){
         ggsave(here::here(output_folder,glue::glue("Protein_volcano_POI",dataset_name," ",contrast,".png")), width = 10, height = 15)
         
         
-        # ego3 <- gseGO(geneList     = dep@elementMetadata %>% .[i] %>% unlist %>% set_names(dep@elementMetadata$name) %>% sort(decreasing = T),
-        #               OrgDb        = org.Hs.eg.db,
-        #               ont          = "MF",
-        #               keyType = "UNIPROT",
-        #               #nPerm        = 1000,
-        #               minGSSize    = 100,
-        #               maxGSSize    = 500,
-        #               pvalueCutoff = 0.05,
-        #               verbose      = FALSE)
-        # if(!is.null(ego3)){
-        #     ridgeplot(ego3 %>% simplify(), showCategory = 68)+
-        #         ggtitle(glue::glue(dataset_name," MF-GSEA",i))
-        #     ggsave(here::here(output_folder, glue::glue(i," ",dataset_name," MF-GSEA.png")), height = 20, width  = 15)}
-        # ego3 <- gseGO(geneList     = dep@elementMetadata %>% .[i] %>% unlist %>% set_names(dep@elementMetadata$name) %>% sort(decreasing = T),
-        #               OrgDb        = org.Hs.eg.db,
-        #               ont          = "BP",
-        #               keyType = "UNIPROT",
-        #               #nPerm        = 1000,
-        #               minGSSize    = 100,
-        #               maxGSSize    = 500,
-        #               pvalueCutoff = 0.05,
-        #               verbose      = FALSE)
-        # if(!is.null(ego3)){
-        # 
-        #     ridgeplot(ego3 %>% simplify(), showCategory = 68)+
-        #         ggtitle(glue::glue(dataset_name,"BP-GSEA",i))
-        #     ggsave(here::here(output_folder, glue::glue(i," ",dataset_name," BP-GSEA.png")), height = 20, width  = 15)}
+        ego3 <- gseGO(geneList     = dep@elementMetadata %>% .[i] %>% unlist %>% set_names(dep@elementMetadata$name) %>% sort(decreasing = T),
+                      OrgDb        = org.Hs.eg.db,
+                      ont          = "MF",
+                      keyType = "UNIPROT",
+                      #nPerm        = 1000,
+                      minGSSize    = 100,
+                      maxGSSize    = 500,
+                      pvalueCutoff = 0.05,
+                      verbose      = FALSE)
+        if(!is.null(ego3)){
+            ridgeplot(ego3 %>% simplify(), showCategory = 68)+
+                ggtitle(glue::glue(dataset_name," MF-GSEA",i))
+            ggsave(here::here(output_folder, glue::glue(i," ",dataset_name," MF-GSEA.png")), height = 20, width  = 15)}
+        ego3 <- gseGO(geneList     = dep@elementMetadata %>% .[i] %>% unlist %>% set_names(dep@elementMetadata$name) %>% sort(decreasing = T),
+                      OrgDb        = org.Hs.eg.db,
+                      ont          = "BP",
+                      keyType = "UNIPROT",
+                      #nPerm        = 1000,
+                      minGSSize    = 100,
+                      maxGSSize    = 500,
+                      pvalueCutoff = 0.05,
+                      verbose      = FALSE)
+        if(!is.null(ego3)){
+
+            ridgeplot(ego3 %>% simplify(), showCategory = 68)+
+                ggtitle(glue::glue(dataset_name,"BP-GSEA",i))
+            ggsave(here::here(output_folder, glue::glue(i," ",dataset_name," BP-GSEA.png")), height = 20, width  = 15)}
     }
     
     data_imp@assays@data@listData[[1]] %>% as.data.frame() %>%  rownames_to_column("Uniprot") %>% 
@@ -285,7 +317,7 @@ DEP_DIA <- function(input_matrix,dataset_name){
         ggtitle("Coefficient of Variation in Conditions NAs in Sd retained",
                 subtitle = dataset_name)
     ggsave(here::here(output_folder,glue::glue("CV_conditions_unimputted",dataset_name," ",contrast,".png")), width = 10, height = 15)
-    data_filt@assays@data@listData[[1]] %>% as.data.frame() %>%  rownames_to_column("Uniprot") %>% 
+    data_norm@assays@data@listData[[1]] %>% as.data.frame() %>%  rownames_to_column("Uniprot") %>% 
         #glimpse() %>% 
         pivot_longer(-Uniprot,names_to = "Condition", values_to = "Abundance") %>% 
         mutate(Condition = str_remove_all(Condition, "_.$")) %>% 
@@ -300,7 +332,7 @@ DEP_DIA <- function(input_matrix,dataset_name){
     ggsave(here::here(output_folder,glue::glue("CV_conditions_imputted",dataset_name," ",contrast,".png")), width = 10, height = 15)
     
     return(list(Imputted = data_imp@assays@data@listData[[1]],
-                Unimputted = data_filt@assays@data@listData[[1]], 
+                Unimputted = data_norm@assays@data@listData[[1]], 
                 DEPs = set_names(Comparisons_list, dep@elementMetadata %>% names() %>% str_subset("diff"))))
 }
 
