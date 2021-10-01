@@ -1,5 +1,6 @@
 #### functions used in this project ####
 Load_DIA_NN_Data <- function(report_DIA_tsv_file, Samples_df){
+    #need to change it so that I don't end up with lines where is a single protein but the isoforms don't have ids.
     discard_single_isoforms <- function(input_matrix){
         #input_matrix = Etop_DIA
         input_matrix %>% as.data.frame() %>% 
@@ -7,7 +8,7 @@ Load_DIA_NN_Data <- function(report_DIA_tsv_file, Samples_df){
             mutate(Uniprot_sliced = str_remove_all(Uniprot,"-[:graph:]*$")) %>% 
             group_by(Uniprot_sliced) %>% 
             mutate(Is_duplicated = n() > 1,
-                   New_Uniprot = if_else(Is_duplicated == F,Uniprot_sliced,Uniprot)) %>% 
+                   New_Uniprot = if_else(Is_duplicated == F & (!str_detect(Uniprot,";")),Uniprot_sliced,Uniprot)) %>% 
             ungroup() %>% 
             dplyr::select(-c(Is_duplicated,Uniprot_sliced,Uniprot)) %>% 
             column_to_rownames("New_Uniprot") %>% 
