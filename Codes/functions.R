@@ -27,9 +27,9 @@ Load_DIA_NN_Data <- function(report_DIA_tsv_file, Samples_df){
         return(input_df)}
     read_tsv(here::here("Datasets","Raw",report_DIA_tsv_file)) %>% 
         as.data.frame() %>% 
-        subset(Lib.Q.Value<= 0.01 & Lib.PG.Q.Value <= 0.01 ) %>% janitor::clean_names() %>% 
+        subset(Q.Value<= 0.01 & PG.Q.Value <= 0.01 ) %>% janitor::clean_names() %>% 
         dplyr::select(matches("pg_max_lfq|run|protein_group|^genes$")) %>% 
-        distinct() %>% janitor::clean_names() %>% 
+        distinct() %>% 
         mutate(old_pg =protein_group) %>%  
         subset(!str_detect(protein_group,paste0(contaminant_uniprots,collapse = "|"))) %>% 
         remove_rownames() %>%
@@ -54,10 +54,10 @@ Load_DIA_NN_Data <- function(report_DIA_tsv_file, Samples_df){
     
 }
 
-DEP_DIA <- function(input_matrix,dataset_name){
+DEP_DIA <- function(input_matrix,dataset_name,n_accepted_NA_per_condition  = 1){
     #this required a not normalised and not logged matrix with column names of condition in _rep format
-    dataset_name = "Method1_P11833_41"
-    input_matrix <-  Method1_P11833_41# DIA_matrices$DIA_report_file_P11685 %>% as.data.frame()
+     # dataset_name = "Method1_P11833_41"
+     # input_matrix <-  Method1_P11833_41# DIA_matrices$DIA_report_file_P11685 %>% as.data.frame()
     input_matrix <- input_matrix %>% as.data.frame()
     experimental_design_DIA <-  data.frame(
         label = colnames(input_matrix),
@@ -121,14 +121,15 @@ DEP_DIA <- function(input_matrix,dataset_name){
         plot_detect(data_norm)
         dev.off()
         #ggsave(here::here(output_folder,glue::glue("Protein_missingness ",dataset_name,".png")))
-        data_imp <- impute(data_norm, fun = "MinProb", q = 0.01)
-        # to_impute <- data_norm@assays@data@listData[[1]] %>% subset(., rowSums(is.na(.))>1)
-        # to_not_impute <- data_norm@assays@data@listData[[1]] %>% subset(., rowSums(is.na(.))<2)
-        # multiple_imputation <- impute.mi(tab = to_impute,
-        #                                  conditions = experimental_design_DIA$condition %>% as.factor(),
-        #                                  repbio = experimental_design_DIA$replicate %>% as.factor()) 
-        # rownames(multiple_imputation) <- rownames(to_impute)
-        # data_imp@assays@data@listData[[1]] <-  rbind(to_not_impute,multiple_imputation) 
+          data_imp <- impute(data_norm, fun = "MinProb", q = 0.01)
+         to_impute <- data_norm@assays@data@listData[[1]] %>% subset(., rowSums(is.na(.))>n_accepted_NA_per_condition)
+          to_not_impute <- data_norm@assays@data@listData[[1]] %>% subset(., rowSums(is.na(.))<=(n_accepted_NA_per_condition))
+          multiple_imputation <- impute.mi(tab = to_impute,
+                                          conditions = experimental_design_DIA$condition %>% as.factor(),
+                                          repbio = experimental_design_DIA$replicate %>% as.factor())
+         rownames(multiple_imputation) <- rownames(to_impute)
+         data_imp@assays@data@listData[[1]] <-  rbind(to_not_impute,multiple_imputation)
+         data_imp@assays@data@listData[[1]] <- data_imp@assays@data@listData[[1]][rownames(data_norm@assays@data@listData[[1]]),]
     }else{
         data_imp <- data_norm
     }
@@ -245,21 +246,34 @@ DEP_DIA <- function(input_matrix,dataset_name){
     
     Comparisons_list <- list()
     for(i in (dep@elementMetadata %>% names() %>% str_subset("diff") )){
-        i = (dep@elementMetadata %>% names() %>% str_subset("diff"))[3]
+          # i = (dep@elementMetadata %>% names() %>% str_subset("diff"))[3]
         contrast <- str_remove_all(i,"_diff")
-        
+        conditions <- contrast %>% str_match("([:graph:]*)_vs_([:graph:]*)$") %>% .[2:3]
+        non_missing_in_all_comparison <- c(data_norm@assays@data@listData[[1]] %>% as.data.frame() %>% dplyr::select(contains(conditions[1])) %>% 
+            subset(., rowSums(is.na(.))<=n_accepted_NA_per_condition) %>% rownames(),
+          data_norm@assays@data@listData[[1]] %>% as.data.frame() %>% dplyr::select(contains(conditions[2])) %>% 
+              subset(., rowSums(is.na(.))<=n_accepted_NA_per_condition) %>% rownames()) %>% unique()
+        Imputted <- c(data_norm@assays@data@listData[[1]] %>% as.data.frame() %>% dplyr::select(contains(conditions[1])) %>% 
+                          subset(., rowSums(is.na(.))>n_accepted_NA_per_condition) %>% rownames(),
+                      data_norm@assays@data@listData[[1]] %>% as.data.frame() %>% dplyr::select(contains(conditions[2])) %>% 
+                          subset(., rowSums(is.na(.))>n_accepted_NA_per_condition) %>% rownames()) %>% unique()
         volcano_df <-  data.frame(log2_FC = dep@elementMetadata %>%  .[(glue::glue(contrast,"_diff"))] %>% unlist(),
                                   Uniprot = dep@elementMetadata$name,
                                   significant = dep@elementMetadata %>%  .[(glue::glue(contrast,"_significant"))] %>% unlist(),
                                   p.adj = dep@elementMetadata%>%  .[(glue::glue(contrast,"_p.adj"))] %>% unlist() ,
                                   p.val = dep@elementMetadata%>%  .[(glue::glue(contrast,"_p.val"))] %>% unlist()) %>% 
+             subset(Uniprot %in% non_missing_in_all_comparison) %>% 
             mutate(Sabatini = if_else(str_detect(Uniprot,paste(Sabatini_Uniprot,collapse = "|")),T,F),
+                   Imputted_comparison = Uniprot %in% Imputted,
                    Single_Uniprot = Uniprot %>% str_remove_all(";[:graph:]*$") %>% str_remove_all("-[:graph:]*$")) %>% 
             left_join(HUMAN_9606 %>% subset(Type == "Gene_Name") %>% dplyr::select(-Type), by  = c("Single_Uniprot" = "Uniprot"))
         volcano_df %>% ggplot(aes(x = log2_FC, y = -log10(p.val), label = ID, colour = Sabatini, alpha = significant))+
             geom_point()+
-            ggrepel::geom_label_repel(data = . %>% subset(significant == T&  Sabatini==F ))+
+            geom_point(data = . %>% subset(Imputted_comparison == T), colour = "grey50")+
+            ggrepel::geom_label_repel(data = . %>% subset(significant == T&  Sabatini==F & Imputted_comparison == F))+
             ggrepel::geom_label_repel(data = . %>% subset(significant == T&  Sabatini==T))+
+            annotate("text", x = c(-5,5), y=(-1), label = rev(conditions))+
+            
             ggtitle(glue::glue("Diff Present on Chromatin", contrast),
                     subtitle = dataset_name)
         ggsave(here::here(output_folder,glue::glue("Protein_volcano_significant",dataset_name," ",contrast,".png")), width = 10, height = 15)

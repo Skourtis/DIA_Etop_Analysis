@@ -77,8 +77,7 @@ Samples <- data.frame(run=  c("P11833","P11834","P11835","P11836","P11837" ,"P11
 
 
 Method1_P11833_41 <- Load_DIA_NN_Data(DIA_report_file,Samples%>% 
-                
-                                                                     mutate(across(everything(),janitor::make_clean_names)))
+                                           mutate(across(everything(),janitor::make_clean_names)))
 
 list_files_to_analyse <- list(DIA_report_file = "P11833_P11841_Method_1_report.tsv",
                               DIA_report_file_method2 = "P11833_P11841_Method_2_report.tsv",
