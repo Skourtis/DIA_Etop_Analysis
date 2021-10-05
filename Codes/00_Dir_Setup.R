@@ -10,7 +10,7 @@
 # BiocManager::install("DEP")
 # remotes::install_github("demar01/PeCorA")
 pacman::p_load(piggyback, renv, here, tidyverse, targets, DEP,pheatmap,diann,PeCorA,sva,imp4p,
-               org.Hs.eg.db,clusterProfiler,
+               org.Hs.eg.db,clusterProfiler,ggridges,
                visNetwork,matrixStats,magick,testthat, openxlsx, janitor,seqinr)
 renv::init()
 #usethis::use_test()

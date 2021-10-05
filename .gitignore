@@ -45,3 +45,4 @@ Datasets/Raw/*.csv
 Datasets/Raw/*.RData
 Datasets/Raw/*.tsv
 Output/*.*
+Output/Etop_DIA_EC_two_methods/*.png

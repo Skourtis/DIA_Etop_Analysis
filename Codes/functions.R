@@ -25,6 +25,8 @@ Load_DIA_NN_Data <- function(report_DIA_tsv_file, Samples_df){
                     arrange(n) %>% tail(1) %>% dplyr::select(-n)
             }}
         return(input_df)}
+    
+    Output_proteomic_ruler(Samples_df,report_DIA_tsv_file,report_DIA_tsv_file, Uniprot_length_Mass)
     read_tsv(here::here("Datasets","Raw",report_DIA_tsv_file)) %>% 
         as.data.frame() %>% 
         subset(Q.Value<= 0.01 & PG.Q.Value <= 0.01 ) %>% janitor::clean_names() %>% 
@@ -56,8 +58,8 @@ Load_DIA_NN_Data <- function(report_DIA_tsv_file, Samples_df){
 
 DEP_DIA <- function(input_matrix,dataset_name,n_accepted_NA_per_condition  = 1){
     #this required a not normalised and not logged matrix with column names of condition in _rep format
-     # dataset_name = "Method1_P11833_41"
-     # input_matrix <-  Method1_P11833_41# DIA_matrices$DIA_report_file_P11685 %>% as.data.frame()
+       # dataset_name = "DIA_temp"
+       # input_matrix <-  DIA_temp# DIA_matrices$DIA_report_file_P11685 %>% as.data.frame()
     input_matrix <- input_matrix %>% as.data.frame()
     experimental_design_DIA <-  data.frame(
         label = colnames(input_matrix),
@@ -86,6 +88,9 @@ DEP_DIA <- function(input_matrix,dataset_name,n_accepted_NA_per_condition  = 1){
     plot_missval(data_filt)
     dev.off()
     data_norm <- normalize_vsn(data_filt)
+    meanSdPlot(data_norm)
+    ggsave(here::here(output_folder,glue::glue("normalize_vsn ",dataset_name,".png")))
+    
     plot_normalization(data_se, data_norm)+ggtitle(glue::glue("Protein_norm ",dataset_name))
     ggsave(here::here(output_folder,glue::glue("Protein_normalisation ",dataset_name,".png")))
     
@@ -124,7 +129,7 @@ DEP_DIA <- function(input_matrix,dataset_name,n_accepted_NA_per_condition  = 1){
           data_imp <- impute(data_norm, fun = "MinProb", q = 0.01)
          to_impute <- data_norm@assays@data@listData[[1]] %>% subset(., rowSums(is.na(.))>n_accepted_NA_per_condition)
           to_not_impute <- data_norm@assays@data@listData[[1]] %>% subset(., rowSums(is.na(.))<=(n_accepted_NA_per_condition))
-          multiple_imputation <- impute.mi(tab = to_impute,
+          multiple_imputation <- impute.mi(tab = to_impute,methodMNAR = "impute.pa", 
                                           conditions = experimental_design_DIA$condition %>% as.factor(),
                                           repbio = experimental_design_DIA$replicate %>% as.factor())
          rownames(multiple_imputation) <- rownames(to_impute)
@@ -215,7 +220,7 @@ DEP_DIA <- function(input_matrix,dataset_name,n_accepted_NA_per_condition  = 1){
         pivot_longer(contains("_"), names_to = "Condition", values_to = "Abundance") %>% 
         mutate(Condition = str_remove_all(Condition,"_.")) %>% 
         group_by(ProteinGroup,Condition) %>% 
-        summarise(Mean_Abundance = mean(Abundance)) %>% 
+        summarise(Mean_Abundance = mean(Abundance, na.rm = T)) %>% 
         pivot_wider(names_from = "Condition",values_from = "Mean_Abundance") %>% 
         mutate(Uniprot= ProteinGroup %>% str_remove_all(";[:graph:]*$") %>% str_remove_all("-[:graph:]*$")) %>% 
         left_join(HUMAN_9606 %>% subset(Type == "Gene_Name") %>% dplyr::select(-Type) %>% subset(!duplicated(Uniprot))) %>% 
@@ -234,20 +239,21 @@ DEP_DIA <- function(input_matrix,dataset_name,n_accepted_NA_per_condition  = 1){
     myColor <- colorRampPalette(c("blue", "white", "red"))(paletteLength)
     # length(breaks) == length(paletteLength) + 1
     # use floor and ceiling to deal with even/odd length pallettelengths
-    myBreaks <- c(seq(min(Significant_proteins), 0, length.out=ceiling(paletteLength/2) + 1), 
-                  seq(max(Significant_proteins)/paletteLength, max(Significant_proteins), length.out=floor(paletteLength/2)))
+    myBreaks <- c(seq(min(Significant_proteins, na.rm = T), 0, length.out=ceiling(paletteLength/2) + 1), 
+                  seq(max(Significant_proteins, na.rm = T)/paletteLength, max(Significant_proteins, na.rm = T), length.out=floor(paletteLength/2)))
     
     png(here::here(output_folder,glue::glue("Heatmap_Significant ",dataset_name,".png")), width = 2500, height = 3800,res  =300) 
-    pheatmap::pheatmap(Significant_proteins,cluster_cols = F,fontsize_row = 6, clustering_distance_rows = "euclidean", 
-                       main = glue::glue(dataset_name, " Significant Proteins Normalised to DMSO"),color=myColor, breaks=myBreaks)
+    pheatmap::pheatmap(Significant_proteins,cluster_cols = F,fontsize_row = 6, clustering_distance_rows = "euclidean", cluster_rows = T,
+                       main = glue::glue(dataset_name, " Significant Proteins Normalised to DMSO - imputted"),color=myColor, breaks=myBreaks)
     dev.off()
     if(names(dev.cur()) != "null device"){dev.off()}
     #clusters <- NbClust::NbClust(Significant_proteins, method = "kmeans")$Best.partition
     
     Comparisons_list <- list()
     for(i in (dep@elementMetadata %>% names() %>% str_subset("diff") )){
-          # i = (dep@elementMetadata %>% names() %>% str_subset("diff"))[3]
+           # i = (dep@elementMetadata %>% names() %>% str_subset("diff"))[1]
         contrast <- str_remove_all(i,"_diff")
+        print(contrast)
         conditions <- contrast %>% str_match("([:graph:]*)_vs_([:graph:]*)$") %>% .[2:3]
         non_missing_in_all_comparison <- c(data_norm@assays@data@listData[[1]] %>% as.data.frame() %>% dplyr::select(contains(conditions[1])) %>% 
             subset(., rowSums(is.na(.))<=n_accepted_NA_per_condition) %>% rownames(),
@@ -272,7 +278,7 @@ DEP_DIA <- function(input_matrix,dataset_name,n_accepted_NA_per_condition  = 1){
             geom_point(data = . %>% subset(Imputted_comparison == T), colour = "grey50")+
             ggrepel::geom_label_repel(data = . %>% subset(significant == T&  Sabatini==F & Imputted_comparison == F))+
             ggrepel::geom_label_repel(data = . %>% subset(significant == T&  Sabatini==T))+
-            annotate("text", x = c(-5,5), y=(-1), label = rev(conditions))+
+            annotate("text", x = c(-5,5), y=0, label = rev(conditions))+
             
             ggtitle(glue::glue("Diff Present on Chromatin", contrast),
                     subtitle = dataset_name)
@@ -299,7 +305,7 @@ DEP_DIA <- function(input_matrix,dataset_name,n_accepted_NA_per_condition  = 1){
                       maxGSSize    = 500,
                       pvalueCutoff = 0.05,
                       verbose      = FALSE)
-        if(!is.null(ego3)){
+        if((ego3@result %>% nrow)>0){
             ridgeplot(ego3 %>% simplify(), showCategory = 68)+
                 ggtitle(glue::glue(dataset_name," MF-GSEA",i))
             ggsave(here::here(output_folder, glue::glue(i," ",dataset_name," MF-GSEA.png")), height = 20, width  = 15)}
@@ -312,7 +318,7 @@ DEP_DIA <- function(input_matrix,dataset_name,n_accepted_NA_per_condition  = 1){
                       maxGSSize    = 500,
                       pvalueCutoff = 0.05,
                       verbose      = FALSE)
-        if(!is.null(ego3)){
+        if((ego3@result %>% nrow)>0){
 
             ridgeplot(ego3 %>% simplify(), showCategory = 68)+
                 ggtitle(glue::glue(dataset_name,"BP-GSEA",i))
@@ -331,7 +337,7 @@ DEP_DIA <- function(input_matrix,dataset_name,n_accepted_NA_per_condition  = 1){
         facet_wrap("Condition")+
         ggtitle("Coefficient of Variation in Conditions NAs in Sd retained",
                 subtitle = dataset_name)
-    ggsave(here::here(output_folder,glue::glue("CV_conditions_unimputted",dataset_name," ",contrast,".png")), width = 10, height = 15)
+    ggsave(here::here(output_folder,glue::glue("CV_conditions_imputted",dataset_name," ",contrast,".png")), width = 10, height = 15)
     data_norm@assays@data@listData[[1]] %>% as.data.frame() %>%  rownames_to_column("Uniprot") %>% 
         #glimpse() %>% 
         pivot_longer(-Uniprot,names_to = "Condition", values_to = "Abundance") %>% 
@@ -344,7 +350,38 @@ DEP_DIA <- function(input_matrix,dataset_name,n_accepted_NA_per_condition  = 1){
         facet_wrap("Condition")+
         ggtitle("Coefficient of Variation in Conditions NAs in Sd retained",
                 subtitle =  dataset_name)
-    ggsave(here::here(output_folder,glue::glue("CV_conditions_imputted",dataset_name," ",contrast,".png")), width = 10, height = 15)
+    ggsave(here::here(output_folder,glue::glue("CV_conditions_unimputted",dataset_name," ",contrast,".png")), width = 10, height = 15)
+    # replicates <- experimental_design_DIA %>% group_by(condition) %>% sample_n(2) %>% ungroup() %>% pull(label,condition)
+    # input_df <- data_norm@assays@data@listData[[1]] %>% as.data.frame() %>%  rownames_to_column("Uniprot")
+    # named_vector = replicates[1:2]
+    # rep_1 = named_vector[1]
+    # rep_2 = named_vector[2]
+    # MA_replicates(rep_1,rep_2,input_df)
+    # 
+    # MA_replicates <-  function(named_vector,named_vector_2,input_df){
+    #     print(named_vector)
+    #     print(named_vector_2)
+    #     
+    #     input_df %>% mutate(
+    #        "{unique(names(named_vector))}" :=  diff({{named_vector}},{{named_vector_2}}))
+    # }
+    # 
+    # data_norm@assays@data@listData[[1]] %>% as.data.frame() %>%  rownames_to_column("Uniprot") %>% 
+    #     na.omit() %>% 
+    #     mutate()
+    #     #glimpse() %>% 
+    #     pivot_longer(-Uniprot,names_to = "Condition", values_to = "Abundance") %>% 
+    #     mutate(Condition = str_remove_all(Condition, "_.$")) %>% 
+    #     group_by(Condition,Uniprot) %>% 
+    #     summarise(Mean_Abundance = mean(Abundance, na.rm = T),
+    #               Protein_CV = sd(Abundance, na.rm = F)/Mean_Abundance) %>% 
+    #     ggplot(aes(x = Mean_Abundance, y = Protein_CV))+
+    #     geom_point()+
+    #     facet_wrap("Condition")+
+    #     ggtitle("Coefficient of Variation in Conditions NAs in Sd retained",
+    #             subtitle =  dataset_name)
+    # ggsave(here::here(output_folder,glue::glue("CV_conditions_imputted",dataset_name," ",contrast,".png")), width = 10, height = 15)
+    # 
     
     return(list(Imputted = data_imp@assays@data@listData[[1]],
                 Unimputted = data_norm@assays@data@listData[[1]], 
@@ -353,6 +390,8 @@ DEP_DIA <- function(input_matrix,dataset_name,n_accepted_NA_per_condition  = 1){
 
 PeCoRa_function <- function(DIA_report_file,Samples, control_condition = NULL){
     #pacman::p_load(diann, PeCorA)
+     # DIA_report_file <- "P11833_P11841_Method_1_report.tsv"
+    # Samples=Samples
     peptide_file <- read_tsv(here::here("Datasets","Raw",DIA_report_file)) 
     
     
@@ -362,20 +401,21 @@ PeCoRa_function <- function(DIA_report_file,Samples, control_condition = NULL){
                                     quantity.header = "Precursor.Normalised")
     PepCorA_setup <- peptides.maxlfq %>% as.data.frame()%>% rownames_to_column("Peptide") %>% 
         pivot_longer(-Peptide, names_to = "Condition_rep", values_to = "Normalised.Area") %>% 
-        #view()
-        mutate(run = str_match(Condition_rep,"-([:graph:]{6})-")[,2] %>% tolower()) %>% 
-        left_join(Samples %>% mutate(run = tolower(run))) %>% #glimpse() %>% 
+         mutate(run = str_match(Condition_rep,"-([:graph:]{6})-[:graph:].raw$")[,2] %>% tolower()) %>% 
+        
+        left_join(Samples %>% mutate(run = tolower(run))) %>%
         separate(Condition, into = c("Condition","BioReplicate"), sep = "_") %>% 
         left_join(peptide_file %>% as.data.frame() %>% dplyr::select(Modified.Sequence,Stripped.Sequence,Protein.Group) %>% distinct(),
                   by = c("Peptide" = "Stripped.Sequence")) %>% as.data.frame() %>% mutate(Normalised.Area = replace_na(Normalised.Area,0)) %>% 
-        mutate(BioReplicate = as.numeric(BioReplicate)) %>% 
+        mutate(BioReplicate = as.numeric(BioReplicate),
+               Condition = as.factor(Condition)) %>% 
         dplyr::rename(Protein=Protein.Group,
                       Peptide.Modified.Sequence = Modified.Sequence)
-    area_column_name <- which(str_detect(testing_PepCorA %>% colnames(),"ormali"))
+    area_column_name <- which(str_detect(PepCorA_setup %>% colnames(),"ormali"))
     if(is.null(control_condition)){
         control_condition <-PepCorA_setup$Condition[1]
     }
-    scaled_peptides <- PeCorA_preprocessing(testing_PepCorA,
+    scaled_peptides <- PeCorA_preprocessing(PepCorA_setup,
                                             area_column_name = area_column_name,
                                             threshold_to_filter = 100,
                                             control_name = control_condition)
@@ -387,4 +427,68 @@ PeCoRa_function <- function(DIA_report_file,Samples, control_condition = NULL){
     
     
     
+}
+
+Output_proteomic_ruler <- function(Samples_df,dataset_name,report_file, Uniprot_length_Mass){
+ # report_file <- DIA_report_file
+ peptide_file <- read_tsv(here::here("Datasets","Raw",DIA_report_file)) %>% 
+   subset(Lib.Q.Value <= 0.01 & Lib.PG.Q.Value <= 0.01) %>%group_by(Protein.Group) %>% 
+   janitor::clean_names()
+ruler <- left_join(peptide_file%>% 
+   dplyr::select(matches("pg_max_lfq|run|protein_group")) %>% 
+   distinct() %>% 
+   subset(!str_detect(protein_group,paste0(contaminant_uniprots,collapse = "|"))) %>% 
+   mutate(run = str_replace_all(run, c("P11690-1" = "P11591-1",
+                                       "P11690-2" = "P11592-1",
+                                       "P11690-3" = "P11593-1")),
+          run = str_match(run,"-([:graph:]{6})-")[,2] %>% tolower()) %>%  
+   left_join(Samples_df) %>%  
+   pivot_wider(-run, names_from = Condition ,values_from = pg_max_lfq),
+   peptide_file %>% group_by(protein_group) %>% summarise(Unique_razor_pept = sum(proteotypic),
+             Total_pept = n()) ) %>% 
+    # rename(Uniprot = protein_group) %>%  
+  mutate(Uniprot = str_remove_all(protein_group,";[:graph:]*$")) %>% 
+  left_join(Uniprot_length_Mass, by = "Uniprot") 
+ 
+ 
+  write_tsv(ruler,here::here("Datasets","Processed",glue::glue("For_Proteomic_ruler_",dataset_name,".txt")))
+  
+}
+
+Import_proteomic_ruler <- function(prot_ruler_file){
+  # prot_ruler_file <- "From_proteomic_ruler.txt"
+  input_matrix <- here::here("Datasets","Processed",prot_ruler_file) %>% 
+    read.delim() %>% .[-1,] %>% 
+    janitor::clean_names() %>% 
+    subset(absolute_quantification_accuracy != "low") %>% 
+    remove_rownames() %>% 
+    dplyr::select(protein_group, contains("copy")) %>% as.data.frame() %>% 
+    column_to_rownames("protein_group") %>%
+    mutate(across(everything(), ~as.numeric(.x))) %>% 
+    set_names(.,str_remove_all(colnames(.),"copy_number_")) %>% 
+  mutate(across(where(is.numeric),~log2(as.numeric(.x))),
+         across(where(is.numeric), ~if_else(is.infinite(.x), NaN,.x))) %>% 
+    as.matrix() %>% 
+    proDA::median_normalization()
+  # experimental_design_DIA <-  data.frame(
+  #   label = colnames(input_matrix),
+  #   condition =  str_remove_all(colnames(input_matrix),"_[:graph:]*$"),
+  #   replicate = str_remove_all(colnames(input_matrix),"^[:graph:]*_") %>% as.numeric()
+  # )
+  # data_unique_Etop <- input_matrix %>% rownames_to_column("name") %>% 
+  #   left_join(HUMAN_9606 %>% 
+  #               subset(Type == "Gene_Name") %>% 
+  #               dplyr::select(-Type), 
+  #             by = c("name" = "Uniprot")) %>%
+  #   subset(!duplicated(name))
+  # 
+  # Quant_columns <- which(colnames(data_unique_Etop) %in%colnames(input_matrix))# get LFQ column numbers
+  # data_se <- make_se(data_unique_Etop, Quant_columns, experimental_design_DIA)
+  # data_se_parsed <- make_se_parse(data_unique_Etop, Quant_columns)
+  # data_filt <- filter_missval(data_se, thr = 1)
+  # data_filt@assays@data@listData[[1]][is.nan(data_filt@assays@data@listData[[1]])] <- NA 
+  # plot_missval(data_filt)
+  # data_norm <- normalize_vsn(data_filt)
+  # data_norm@assays@data@listData[[1]]
+  
 }
