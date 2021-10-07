@@ -1,38 +1,38 @@
 #### functions used in this project ####
 Load_DIA_NN_Data <- function(report_DIA_tsv_file, Samples_df){
     #need to change it so that I don't end up with lines where is a single protein but the isoforms don't have ids.
-    discard_single_isoforms <- function(input_matrix){
-        #input_matrix = Etop_DIA
-        input_matrix %>% as.data.frame() %>% 
-            rownames_to_column("Uniprot") %>% 
-            mutate(Uniprot_sliced = str_remove_all(Uniprot,"-[:graph:]*$")) %>% 
-            group_by(Uniprot_sliced) %>% 
-            mutate(Is_duplicated = n() > 1,
-                   New_Uniprot = if_else(Is_duplicated == F & (!str_detect(Uniprot,";")),Uniprot_sliced,Uniprot)) %>% 
-            ungroup() %>% 
-            dplyr::select(-c(Is_duplicated,Uniprot_sliced,Uniprot)) %>% 
-            column_to_rownames("New_Uniprot") %>% 
-            as.matrix()
-    }
-    discard_uniprot_isoforms <- function(input_df,prot_id_col,gene_col){
-        #prot_id_col = "protein_group"
-        #gene_col = "genes"
-        #input_df <- DIA_NN_original %>% subset(protein_group == "O60313;O60313-2")
-        if(!is.na(input_df %>% pull(gene_col))){
-            if(!str_detect(input_df %>% pull(gene_col),";")){
-                input_df <- input_df %>% separate_rows(protein_group, sep = ";") %>%
-                    left_join(HUMAN_9606_count, by = c( "protein_group"="Uniprot" )) %>%
-                    arrange(n) %>% tail(1) %>% dplyr::select(-n)
-            }}
-        return(input_df)}
+    # discard_single_isoforms <- function(input_matrix){
+    #     #input_matrix = Etop_DIA
+    #     input_matrix %>% as.data.frame() %>% 
+    #         rownames_to_column("Uniprot") %>% 
+    #         mutate(Uniprot_sliced = str_remove_all(Uniprot,"-[:graph:]*$")) %>% 
+    #         group_by(Uniprot_sliced) %>% 
+    #         mutate(Is_duplicated = n() > 1,
+    #                New_Uniprot = if_else(Is_duplicated == F & (!str_detect(Uniprot,";")),Uniprot_sliced,Uniprot)) %>% 
+    #         ungroup() %>% 
+    #         dplyr::select(-c(Is_duplicated,Uniprot_sliced,Uniprot)) %>% 
+    #         column_to_rownames("New_Uniprot") %>% 
+    #         as.matrix()
+    # }
+    # discard_uniprot_isoforms <- function(input_df,prot_id_col,gene_col){
+    #     #prot_id_col = "protein_group"
+    #     #gene_col = "genes"
+    #     #input_df <- DIA_NN_original %>% subset(protein_group == "O60313;O60313-2")
+    #     if(!is.na(input_df %>% pull(gene_col))){
+    #         if(!str_detect(input_df %>% pull(gene_col),";")){
+    #             input_df <- input_df %>% separate_rows(protein_group, sep = ";") %>%
+    #                 left_join(HUMAN_9606_count, by = c( "protein_group"="Uniprot" )) %>%
+    #                 arrange(n) %>% tail(1) %>% dplyr::select(-n)
+    #         }}
+    #     return(input_df)}
     
     Output_proteomic_ruler(Samples_df,report_DIA_tsv_file,report_DIA_tsv_file, Uniprot_length_Mass)
     read_tsv(here::here("Datasets","Raw",report_DIA_tsv_file)) %>% 
         as.data.frame() %>% 
-        subset(Q.Value<= 0.01 & PG.Q.Value <= 0.01 ) %>% janitor::clean_names() %>% 
+        subset(Lib.Q.Value<= 0.01 & Lib.PG.Q.Value <= 0.01 ) %>% janitor::clean_names() %>% 
         dplyr::select(matches("pg_max_lfq|run|protein_group|^genes$")) %>% 
         distinct() %>% 
-        mutate(old_pg =protein_group) %>%  
+        # mutate(old_pg =protein_group) %>%  
         subset(!str_detect(protein_group,paste0(contaminant_uniprots,collapse = "|"))) %>% 
         remove_rownames() %>%
         
@@ -41,14 +41,14 @@ Load_DIA_NN_Data <- function(report_DIA_tsv_file, Samples_df){
                                             "P11690-3" = "P11593-1")),
                run = str_match(run,"-([:graph:]{6})-")[,2] %>% tolower()) %>%  left_join(Samples_df) %>%  
         pivot_wider(-run, names_from = Condition ,values_from = pg_max_lfq) %>% 
-        group_split(protein_group) %>%
-        map_dfr(.x = .,~.x %>% discard_uniprot_isoforms("protein_group","genes" )) %>%
-        group_by(protein_group) %>%
-        mutate(Is_duplicated = n() > 1,
-               New_Uniprot = if_else(Is_duplicated == F,protein_group,old_pg)) %>% 
-        column_to_rownames("New_Uniprot")%>% 
+        # group_split(protein_group) %>%
+        # map_dfr(.x = .,~.x %>% discard_uniprot_isoforms("protein_group","genes" )) %>%
+        # group_by(protein_group) %>%
+        # mutate(Is_duplicated = n() > 1,
+        #        New_Uniprot = if_else(Is_duplicated == F,protein_group,old_pg)) %>% 
+        column_to_rownames("protein_group")%>% 
         dplyr::select(any_of(Samples_df$Condition)) %>% 
-        discard_single_isoforms %>% 
+        # discard_single_isoforms %>% 
         as.matrix() #%>% log2()
     
     
@@ -56,11 +56,14 @@ Load_DIA_NN_Data <- function(report_DIA_tsv_file, Samples_df){
     
 }
 
-DEP_DIA <- function(input_matrix,dataset_name,n_accepted_NA_per_condition  = 1){
+DEP_DIA <- function(input_matrix,dataset_name,n_accepted_NA_per_condition  = 1, ComBAT = F){
     #this required a not normalised and not logged matrix with column names of condition in _rep format
        # dataset_name = "DIA_temp"
-       # input_matrix <-  DIA_temp# DIA_matrices$DIA_report_file_P11685 %>% as.data.frame()
-    input_matrix <- input_matrix %>% as.data.frame()
+       # input_matrix <-  DIA_temp %>% 
+         
+         # as.data.frame() 
+         # mutate(across(everything(),~.x^2)) %>% 
+       input_matrix <- input_matrix %>% as.data.frame()
     experimental_design_DIA <-  data.frame(
         label = colnames(input_matrix),
         condition =  str_remove_all(colnames(input_matrix),"_[:graph:]*$"),
@@ -69,7 +72,8 @@ DEP_DIA <- function(input_matrix,dataset_name,n_accepted_NA_per_condition  = 1){
     data_unique_Etop <- input_matrix %>% rownames_to_column("name") %>% 
         left_join(HUMAN_9606 %>% 
                       subset(Type == "Gene_Name") %>% 
-                      dplyr::select(-Type), 
+                      dplyr::select(-Type) %>% 
+                    subset(!duplicated(Uniprot)), 
                   by = c("name" = "Uniprot")) %>%
         subset(!duplicated(name))
     
@@ -88,7 +92,9 @@ DEP_DIA <- function(input_matrix,dataset_name,n_accepted_NA_per_condition  = 1){
     plot_missval(data_filt)
     dev.off()
     data_norm <- normalize_vsn(data_filt)
-    meanSdPlot(data_norm)
+    # data_norm@assays@data@listData[[1]] <- input_matrix
+    
+    DEP::meanSdPlot(data_norm)
     ggsave(here::here(output_folder,glue::glue("normalize_vsn ",dataset_name,".png")))
     
     plot_normalization(data_se, data_norm)+ggtitle(glue::glue("Protein_norm ",dataset_name))
@@ -127,19 +133,110 @@ DEP_DIA <- function(input_matrix,dataset_name,n_accepted_NA_per_condition  = 1){
         dev.off()
         #ggsave(here::here(output_folder,glue::glue("Protein_missingness ",dataset_name,".png")))
           data_imp <- impute(data_norm, fun = "MinProb", q = 0.01)
-         to_impute <- data_norm@assays@data@listData[[1]] %>% subset(., rowSums(is.na(.))>n_accepted_NA_per_condition)
-          to_not_impute <- data_norm@assays@data@listData[[1]] %>% subset(., rowSums(is.na(.))<=(n_accepted_NA_per_condition))
-          multiple_imputation <- impute.mi(tab = to_impute,methodMNAR = "impute.pa", 
-                                          conditions = experimental_design_DIA$condition %>% as.factor(),
-                                          repbio = experimental_design_DIA$replicate %>% as.factor())
-         rownames(multiple_imputation) <- rownames(to_impute)
-         data_imp@assays@data@listData[[1]] <-  rbind(to_not_impute,multiple_imputation)
+         # to_impute <- data_norm@assays@data@listData[[1]] %>% subset(., rowSums(is.na(.))>n_accepted_NA_per_condition)
+          # to_not_impute <- data_norm@assays@data@listData[[1]] %>% subset(., rowSums(is.na(.))<=(n_accepted_NA_per_condition))
+          if(ComBAT == T){
+            batch = if_else(str_match(colnames(input_matrix),"_(.)$")[,2] %>% as.numeric() <4,2,1)
+            
+            multiple_imputation <-  cbind(impute.mi(tab = data_norm@assays@data@listData[[1]][,batch == 2],#methodMNAR = "impute.pa",
+                                                   conditions = experimental_design_DIA$condition[batch == 2] %>% as.factor(),
+                                                   repbio = experimental_design_DIA$replicate[batch == 2] %>% as.factor()),
+                  impute.mi(tab = data_norm@assays@data@listData[[1]][,batch == 1],#methodMNAR = "impute.pa",
+                                                   conditions = experimental_design_DIA$condition[batch == 1] %>% as.factor(),
+                                                   repbio = experimental_design_DIA$replicate[batch == 1] %>% as.factor())) 
+            
+          }
+          
+         rownames(multiple_imputation) <- rownames(data_norm@assays@data@listData[[1]])
+         colnames(multiple_imputation) <- colnames(data_norm@assays@data@listData[[1]])
+         data_imp@assays@data@listData[[1]] <- multiple_imputation#  rbind(to_not_impute,multiple_imputation)
          data_imp@assays@data@listData[[1]] <- data_imp@assays@data@listData[[1]][rownames(data_norm@assays@data@listData[[1]]),]
     }else{
         data_imp <- data_norm
     }
     plot_imputation(data_norm, data_imp)
     ggsave(here::here(output_folder,glue::glue("Protein_imputted ",dataset_name,".png")))
+    
+    if(ComBAT == T){
+      edata = data_imp@assays@data@listData[[1]]
+      
+      
+      # parametric adjustment
+      combat_edata1 = ComBat(dat=edata, batch=batch, mod=NULL, par.prior=TRUE, prior.plots=FALSE)
+      
+      pca_res <- prcomp(combat_edata1  %>% na.omit() %>% t(), scale=TRUE) 
+      #plot_missval(data_filt)
+      # Impute missing data using random draws from a Gaussian distribution centered around a minimal value (for MNAR)
+      
+      var_explained <- pca_res$sdev^2/sum(pca_res$sdev^2)
+      
+      pca_res$x %>% 
+        as.data.frame %>%
+        rownames_to_column("Sample") %>% 
+        mutate(Condition = str_remove(Sample,"_.$")) %>% 
+        ggplot(aes(x=PC1,y=PC2, label = Sample, colour = Condition )) + geom_point(size=4) +
+        ggrepel::geom_label_repel()+
+        labs(x=paste0("PC1: ",round(var_explained[1]*100,1),"%"),
+             y=paste0("PC2: ",round(var_explained[2]*100,1),"%")) +
+        theme(legend.position="top") +
+        ggtitle(glue::glue("Batch_corrected ",dataset_name))+ 
+        theme(plot.title = element_text(size = 20))
+      ggsave(here::here(output_folder,glue::glue(dataset_name,"batch PCA.png")))
+      
+      input_matrix_batch <-combat_edata1^10 %>% as.data.frame() %>% 
+        dplyr::select(!matches("dmso_(4|5)"))
+      experimental_design_DIA <-  data.frame(
+        label = colnames(input_matrix_batch),
+        condition =  str_remove_all(colnames(input_matrix_batch),"_[:graph:]*$"),
+        replicate = str_remove_all(colnames(input_matrix_batch),"^[:graph:]*_") %>% as.numeric()
+      )
+      data_unique_Etop <- input_matrix_batch %>% rownames_to_column("name") %>% 
+        left_join(HUMAN_9606 %>% 
+                    subset(Type == "Gene_Name") %>% 
+                    dplyr::select(-Type) %>% 
+                    subset(!duplicated(Uniprot)), 
+                  by = c("name" = "Uniprot")) %>%
+        subset(!duplicated(name))
+      
+      Quant_columns <- which(colnames(data_unique_Etop) %in%colnames(input_matrix_batch))# get LFQ column numbers
+      data_se <- make_se(data_unique_Etop, Quant_columns, experimental_design_DIA)
+      data_filt <- filter_missval(data_se, thr = 1)
+      data_filt@assays@data@listData[[1]][is.nan(data_filt@assays@data@listData[[1]])] <- NA 
+      data_norm_batch <- normalize_vsn(data_filt)
+      DEP::meanSdPlot(data_norm_batch)
+    
+      
+      if(data_norm_batch@assays@data@listData[[1]] %>% is.na() %>% any()){
+        png(here::here(output_folder,glue::glue("Protein_Missingness_Abundance ",dataset_name,".png")), width = 2500, height = 3800,res  =300) 
+        plot_detect(data_norm_batch)
+        dev.off()
+        #ggsave(here::here(output_folder,glue::glue("Protein_missingness ",dataset_name,".png")))
+        data_imp <- impute(data_norm, fun = "MinProb", q = 0.01)
+        # to_impute <- data_norm@assays@data@listData[[1]] %>% subset(., rowSums(is.na(.))>n_accepted_NA_per_condition)
+        # to_not_impute <- data_norm@assays@data@listData[[1]] %>% subset(., rowSums(is.na(.))<=(n_accepted_NA_per_condition))
+        if(ComBAT == T){
+          batch = if_else(str_match(colnames(input_matrix),"_(.)$")[,2] %>% as.numeric() <4,2,1)
+          
+          multiple_imputation <-  cbind(impute.mi(tab = data_norm_batch@assays@data@listData[[1]][,batch == 2],#methodMNAR = "impute.pa",
+                                                  conditions = experimental_design_DIA$condition[batch == 2] %>% as.factor(),
+                                                  repbio = experimental_design_DIA$replicate[batch == 2] %>% as.factor()),
+                                        impute.mi(tab = data_norm_batch@assays@data@listData[[1]][,batch == 1],#methodMNAR = "impute.pa",
+                                                  conditions = experimental_design_DIA$condition[batch == 1] %>% as.factor(),
+                                                  repbio = experimental_design_DIA$replicate[batch == 1] %>% as.factor())) 
+          
+        }
+        
+        rownames(multiple_imputation) <- rownames(data_norm_batch@assays@data@listData[[1]])
+        colnames(multiple_imputation) <- colnames(data_norm_batch@assays@data@listData[[1]])
+        data_imp@assays@data@listData[[1]] <- multiple_imputation#  rbind(to_not_impute,multiple_imputation)
+        data_imp@assays@data@listData[[1]] <- data_imp@assays@data@listData[[1]][rownames(data_norm@assays@data@listData[[1]]),]
+      }else{
+        data_imp <- data_norm_batch
+      }
+      
+      
+      
+    }
     data_diff_all_contrasts <- DEP::test_diff(data_imp, type = "all")
     dep <- add_rejections(data_diff_all_contrasts, alpha = 0.05, lfc = 0)
     
@@ -251,7 +348,7 @@ DEP_DIA <- function(input_matrix,dataset_name,n_accepted_NA_per_condition  = 1){
     
     Comparisons_list <- list()
     for(i in (dep@elementMetadata %>% names() %>% str_subset("diff") )){
-           # i = (dep@elementMetadata %>% names() %>% str_subset("diff"))[1]
+              # i = (dep@elementMetadata %>% names() %>% str_subset("diff"))[3]
         contrast <- str_remove_all(i,"_diff")
         print(contrast)
         conditions <- contrast %>% str_match("([:graph:]*)_vs_([:graph:]*)$") %>% .[2:3]
@@ -269,16 +366,16 @@ DEP_DIA <- function(input_matrix,dataset_name,n_accepted_NA_per_condition  = 1){
                                   p.adj = dep@elementMetadata%>%  .[(glue::glue(contrast,"_p.adj"))] %>% unlist() ,
                                   p.val = dep@elementMetadata%>%  .[(glue::glue(contrast,"_p.val"))] %>% unlist()) %>% 
              subset(Uniprot %in% non_missing_in_all_comparison) %>% 
-            mutate(Sabatini = if_else(str_detect(Uniprot,paste(Sabatini_Uniprot,collapse = "|")),T,F),
+            mutate(Metabolic_library = if_else(str_detect(Uniprot,paste(Sabatini_Uniprot,collapse = "|")),T,F),
                    Imputted_comparison = Uniprot %in% Imputted,
                    Single_Uniprot = Uniprot %>% str_remove_all(";[:graph:]*$") %>% str_remove_all("-[:graph:]*$")) %>% 
             left_join(HUMAN_9606 %>% subset(Type == "Gene_Name") %>% dplyr::select(-Type), by  = c("Single_Uniprot" = "Uniprot"))
-        volcano_df %>% ggplot(aes(x = log2_FC, y = -log10(p.val), label = ID, colour = Sabatini, alpha = significant))+
+        volcano_df %>% ggplot(aes(x = log2_FC, y = -log10(p.val), label = ID, colour = Metabolic_library, alpha = significant))+
             geom_point()+
             geom_point(data = . %>% subset(Imputted_comparison == T), colour = "grey50")+
-            ggrepel::geom_label_repel(data = . %>% subset(significant == T&  Sabatini==F & Imputted_comparison == F))+
-            ggrepel::geom_label_repel(data = . %>% subset(significant == T&  Sabatini==T))+
-            annotate("text", x = c(-5,5), y=0, label = rev(conditions))+
+            ggrepel::geom_label_repel(data = . %>% subset(significant == T&  Metabolic_library==F & Imputted_comparison == F))+
+            ggrepel::geom_label_repel(data = . %>% subset(significant == T&  Metabolic_library==T))+
+            annotate("text", x = c(-0.5,0.5), y=0, label = rev(conditions))+
             
             ggtitle(glue::glue("Diff Present on Chromatin", contrast),
                     subtitle = dataset_name)
@@ -296,7 +393,8 @@ DEP_DIA <- function(input_matrix,dataset_name,n_accepted_NA_per_condition  = 1){
         ggsave(here::here(output_folder,glue::glue("Protein_volcano_POI",dataset_name," ",contrast,".png")), width = 10, height = 15)
         
         
-        ego3 <- gseGO(geneList     = dep@elementMetadata %>% .[i] %>% unlist %>% set_names(dep@elementMetadata$name) %>% sort(decreasing = T),
+        ego3 <- gseGO(geneList     = dep@elementMetadata %>% .[i] %>% unlist %>% set_names(dep@elementMetadata$name) %>% sort(decreasing = T) %>% 
+                        set_names(.,str_remove_all(names(.),";[:graph:]*$")),
                       OrgDb        = org.Hs.eg.db,
                       ont          = "MF",
                       keyType = "UNIPROT",
@@ -309,7 +407,8 @@ DEP_DIA <- function(input_matrix,dataset_name,n_accepted_NA_per_condition  = 1){
             ridgeplot(ego3 %>% simplify(), showCategory = 68)+
                 ggtitle(glue::glue(dataset_name," MF-GSEA",i))
             ggsave(here::here(output_folder, glue::glue(i," ",dataset_name," MF-GSEA.png")), height = 20, width  = 15)}
-        ego3 <- gseGO(geneList     = dep@elementMetadata %>% .[i] %>% unlist %>% set_names(dep@elementMetadata$name) %>% sort(decreasing = T),
+        ego3 <- gseGO(geneList     = dep@elementMetadata %>% .[i] %>% unlist %>% set_names(dep@elementMetadata$name) %>% sort(decreasing = T)%>% 
+                        set_names(.,str_remove_all(names(.),";[:graph:]*$")),
                       OrgDb        = org.Hs.eg.db,
                       ont          = "BP",
                       keyType = "UNIPROT",

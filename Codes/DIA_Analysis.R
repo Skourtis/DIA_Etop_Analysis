@@ -14,10 +14,23 @@ Proteomic_Ruler <- here::here("Datasets","Processed","CCLE_prot_Ruler.txt") %>% 
     set_names(.,str_remove_all(names(.),"Copy\\.number\\.")) %>% 
     mutate(across(contains("_"),~log2(as.numeric(.x))),
            across(where(is.numeric), ~if_else(is.infinite(.x), NaN,.x))) %>% 
-    subset(.,rowSums(is.na(.))<(ncol(.)/3)) %>% 
-    subset(Absolute.quantification.accuracy != "low") %>% 
-    dplyr::select(-Absolute.quantification.accuracy) %>% 
+    subset(!is.nan(U2OS_BONE)) %>% 
+    # subset(.,rowSums(is.na(.))<(ncol(.)/3)) %>%
+    # subset(Absolute.quantification.accuracy != "low") %>%
+    # dplyr::select(-Absolute.quantification.accuracy) %>%
     janitor::clean_names()
+# Proteomic_Ruler_acc <- here::here("Datasets","Processed","CCLE_prot_Ruler.txt") %>% read.delim() %>% .[-1,] %>% 
+#     dplyr::select(matches("Copy|Uniprot_Acc|accuracy"))%>% 
+#     remove_rownames() %>% 
+#     column_to_rownames("Uniprot_Acc") %>% 
+#     #mutate(across(where(is.numeric), as.numeric)) %>% 
+#     set_names(.,str_remove_all(names(.),"Copy\\.number\\.")) %>% 
+#     mutate(across(contains("_"),~log2(as.numeric(.x))),
+#            across(where(is.numeric), ~if_else(is.infinite(.x), NaN,.x))) %>% 
+#     subset(.,rowSums(is.na(.))<(ncol(.)/3)) %>% 
+#     subset(Absolute.quantification.accuracy != "low") %>% 
+#     # dplyr::select(-Absolute.quantification.accuracy) %>% 
+#     janitor::clean_names()
 
 Uniprot_length_Mass <- here::here("Datasets","Raw", "Uniprot_Molecular_sizes.tab") %>% 
     read_tsv() %>% 
@@ -90,19 +103,6 @@ Complexes <- read.delim(here::here("Datasets","Raw","coreComplexes.txt")) %>% su
     pull(subunits_uni_prot_i_ds,complex_name)
 Complexes <- Complexes %>% str_split(";") %>% set_names(names(Complexes))
 #####
-# DIA_report_file <- "P11833_P11841_Method_1_report.tsv"
-# 
-# Samples <- data.frame(run=  c("P11833","P11834","P11835","P11836","P11837" ,"P11838","P11839","P11840" ,"P11841"),
-#                      
-#                       
-#                       Condition = c("DMSO_1","DMSO_2","DMSO_3","0H_1", "0H_2","0H_3","24H_1", "24H_2" ,"24H_3"))
-# 
-# 
-# Method1_P11833_41 <- Load_DIA_NN_Data(DIA_report_file,Samples%>% 
-#                                            mutate(across(everything(),janitor::make_clean_names)))
-# Method1_P11833_41_DEP <- DEP_DIA(Method1_P11833_41,"Method1_P11833_41")
-# Method1_P11833_41_DEP <- DEP_DIA(Method1_P11833_41,"Method1_P11833_41")
-
 list_files_to_analyse <- list(DIA_report_file = "P11833_P11841_Method_1_report.tsv",
                               DIA_report_file_method2 = "P11833_P11841_Method_2_report.tsv",
                               DIA_report_file_method2_w_old = "Method2_original_report.tsv",
@@ -114,22 +114,32 @@ Samples <- data.frame(run=  c("P11833","P11834","P11835","P11836","P11837" ,"P11
                                     "DMSO_4","DMSO_5","DMSO_6","0H_4", "0H_5","0H_6","24H_4", "24H_5" ,"24H_6"))%>% 
     mutate(across(everything(),janitor::make_clean_names))
 
-DIA_temp <- map(.x = list_files_to_analyse[[3]], 
-                ~Load_DIA_NN_Data(.x,Samples))
+Combined_batch <- map(.x = list_files_to_analyse[[3]], 
+                 ~Load_DIA_NN_Data(.x,Samples))
 #It's interesting to see that a lot of swissprot uniprots not captured by CCLE are nuclear proteins, can we show statistical significance?
-DIA_temp_temp <- DEP_DIA(DIA_temp,"Temporary")
+# I didn't see any terms significant
+Combined_batch_DEP<- DEP_DIA(Combined_batch,"MEthod2_Original_batches")
 Temp_proteomic_ruler_sample <- input_matrix %>%
     as.data.frame() %>% 
     rownames_to_column("PG") %>%
     mutate(Uniprot = str_remove_all(PG, ";[:graph:]*$"))
-Temp_proteomic_ruler_sample_2 <- Temp_proteomic_ruler_sample %>% left_join(HUMAN_9606 %>% subset(Type == "Gene_Name"), by =  "Uniprot")%>%
+Temp_proteomic_ruler_sample_2 <- Temp_proteomic_ruler_sample %>% 
+    left_join(HUMAN_9606 %>% subset(Type == "Gene_Name") %>% 
+                  subset(!duplicated(Uniprot)), by =  "Uniprot")%>%
     left_join(markerProteins[,1:2], by = c("ID" = "Proteins")) %>% 
     pivot_longer(cols = contains("_"), names_to = "Condition", values_to = "Abundance")
-    
+ggplot(Temp_proteomic_ruler_sample_2 %>% subset(Condition == "dmso_1"),
+       aes(x = reorder(PG, Abundance), y= Abundance, colour = Compartments))+
+    geom_col()+
+    facet_wrap("Compartments")+
+    ggtitle("Copy Numbers on chrom DMSO_1")
+
 Temp_proteomic_ruler <-     left_join(Temp_proteomic_ruler_sample,Proteomic_Ruler %>% rownames_to_column("Uniprot") %>% 
-    dplyr::select(Uniprot,u2os_bone)) %>% 
-    mutate(across(contains("_"), ~.x-u2os_bone)) 
+    dplyr::select(Uniprot,u2os_bone,absolute_quantification_accuracy)) %>% 
+    mutate(across(where(is.numeric), ~.x-u2os_bone)) 
+
 Missing_U2OS_test <- list(Missing_U2OS = Temp_proteomic_ruler %>% subset(is.na(u2os_bone)) %>% pull(Uniprot) %>% unique(),
+                          # Missing_Etop_DIA =  Temp_proteomic_ruler %>% subset(!is.na(u2os_bone)) %>% pull(Uniprot) %>% unique()
                      Universe = Temp_proteomic_ruler %>% pull(Uniprot) %>% unique())
 
 ego <- enrichGO(gene          = Missing_U2OS_test$Missing_U2OS,
@@ -138,18 +148,33 @@ ego <- enrichGO(gene          = Missing_U2OS_test$Missing_U2OS,
                 ont           = "CC",
                 keyType = "UNIPROT",
                 pAdjustMethod = "BH",
-                pvalueCutoff  = 1,
-                qvalueCutoff  = 1,
+                pvalueCutoff  = 0.05,
+                qvalueCutoff  = 0.05,
                 readable      = TRUE)
 #enrichplot::upsetplot(ego %>% simplify(), n  = 20)
-dotplot(ego, showCategory=30) + ggtitle("")
-
+dotplot(ego, showCategory=30) + ggtitle("Proteins Found by Chromatin DIA but not U2OS CCLE_TMT")
+Proteomic_Ruler %>% 
+    dplyr::select(absolute_quantification_accuracy, u2os_bone ) %>% 
+    rownames_to_column("Uniprot") %>% 
+    na.omit() %>% 
+    left_join(HUMAN_9606 %>% subset(Type == "Gene_Name") %>% 
+                  subset(!duplicated(Uniprot)), by =  "Uniprot")%>%
+    left_join(markerProteins[,1:2], by = c("ID" = "Proteins")) %>% 
+    # pivot_longer(cols = where(is.numeric), names_to = "Condition", values_to = "Abundance") %>% 
+    subset(absolute_quantification_accuracy != "low") %>% 
+        ggplot( aes(x = reorder(Uniprot, u2os_bone), y= u2os_bone, colour = Compartments))+
+        geom_col()+
+        facet_wrap("Compartments")+
+        ggtitle("WCE copy numbers u2os")
+    
                      
 Temp_proteomic_ruler <- na.omit(Temp_proteomic_ruler) %>% 
-    left_join(HUMAN_9606 %>% subset(Type == "Gene_Name"), by =  "Uniprot")%>%
+    left_join(HUMAN_9606 %>% subset(Type == "Gene_Name") %>% 
+                  subset(!duplicated(Uniprot)), by =  "Uniprot")%>%
     left_join(markerProteins[,1:2], by = c("ID" = "Proteins")) %>% 
-    pivot_longer(cols = contains("_"), names_to = "Condition", values_to = "Abundance") %>% 
-    subset(Condition != "u2os_bone")
+    pivot_longer(cols = where(is.numeric), names_to = "Condition", values_to = "Abundance") %>% 
+    subset(Condition != "u2os_bone") %>% 
+    subset(absolute_quantification_accuracy != "low")
 ggplot(Temp_proteomic_ruler %>% subset(Condition == "dmso_1"),
        aes(x = reorder(PG, Abundance), y= Abundance, colour = Compartments))+
     geom_col()+
@@ -188,12 +213,30 @@ Temp_proteomic_ruler %>%
                   ungroup()) %>% 
     mutate(across(contains("Abundance"), scale)) %>% 
     # subset(is.na(Compartments)) %>% 
+    ggplot(aes(x = Mean_Abundance_u2os, y = Mean_Abundance_sample, label = ID, colour = Compartments))+
+    geom_point()+
+    ggrepel::geom_text_repel(data = . %>% subset(str_detect(ID, "^RPL")),max.overlaps = 50 )+
+    geom_abline(slope=1, intercept = 0)+
+    facet_wrap("Compartments")+
+    ggtitle("% of Protein on chromatin vs Copy numbers on chromatin",
+            "Using proteomic Ruler normalised to U2OS CCLE_TMT")
+Temp_proteomic_ruler %>%  
+    group_by(Uniprot,ID,Compartments ) %>%
+    dplyr::summarise(Mean_Abundance_u2os = mean(Abundance, na.rm = T),.groups = "keep") %>% 
+    ungroup() %>% 
+    left_join(Temp_proteomic_ruler_sample_2 %>% 
+                  group_by(Uniprot,ID,Compartments ) %>%
+                  dplyr::summarise(Mean_Abundance_sample = mean(Abundance, na.rm = T),.groups = "keep") %>% 
+                  ungroup()) %>% 
+    mutate(across(contains("Abundance"), scale)) %>% 
+    subset(Compartments == "N1") %>% 
     ggplot(aes(x = Mean_Abundance_u2os, y = Mean_Abundance_sample, label = ID))+
     geom_point()+
     ggrepel::geom_text_repel(data = . %>% subset(str_detect(ID, "^RPL")),max.overlaps = 50 )+
     geom_abline(slope=1, intercept = 0)+
-    facet_wrap("Compartments")
-    
+    facet_wrap("Compartments")+
+    ggtitle("% of Protein on chromatin vs Copy numbers on chromatin",
+            "Using proteomic Ruler normalised to U2OS CCLE_TMT")
 
     
 Output_proteomic_ruler(data_norm@assays@data@listData[[1]] %>% as.data.frame(), "testing_temp", Uniprot_length_Mass )
@@ -230,30 +273,6 @@ Method1_P11833_41_DEP$DEPs$x0h_vs_x24h_diff[,c("log2_FC","Uniprot")] %>%
     ggplot(aes(x = P11685_Log2_FC_24_vs_0, y =  Method2_Log2_FC_24_vs_0))+
     geom_point()
 
-edata = cbind(DIA_DEP$DIA_report_file$ImputtedMethod2_P11833_41_DEP$Unimputted %>% na.omit())
-batch = if_else(str_match(colnames(Method2_P11833_41_DEP$Imputted),"_(.)$")[,2] %>% as.numeric() <4,2,1)
-
-
-# parametric adjustment
-combat_edata1 = ComBat(dat=edata, batch=batch, mod=NULL, par.prior=TRUE, prior.plots=FALSE)
-
-pca_res <- prcomp(combat_edata1  %>% na.omit() %>% t(), scale=TRUE) 
-#plot_missval(data_filt)
-# Impute missing data using random draws from a Gaussian distribution centered around a minimal value (for MNAR)
-
-var_explained <- pca_res$sdev^2/sum(pca_res$sdev^2)
-
-pca_res$x %>% 
-    as.data.frame %>%
-    rownames_to_column("Sample") %>% 
-    mutate(Condition = str_remove(Sample,"_.$")) %>% 
-    ggplot(aes(x=PC1,y=PC2, label = Sample, colour = Condition )) + geom_point(size=4) +
-    ggrepel::geom_label_repel()+
-    labs(x=paste0("PC1: ",round(var_explained[1]*100,1),"%"),
-         y=paste0("PC2: ",round(var_explained[2]*100,1),"%")) +
-    theme(legend.position="top") +
-    ggtitle(dataset_name)+ 
-    theme(plot.title = element_text(size = 20))
 
 Pecora_result <- PeCoRa_function(list_files_to_analyse$DIA_report_file_method2, Samples)
 
