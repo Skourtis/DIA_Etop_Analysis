@@ -1,6 +1,13 @@
 #Deciding between methods 1 and 2 for DIA
 #### functions used in this project ####
-
+Core_enrichemnt <- list(Oxphos_entrez =  "1355/6392/51079/7385/4705/6390/1352/7384/533/4713/54539/1327/4723/54205/10063/4695/1350/4720/4719/7381/374291/4696/1537/4712/4717/5464/1329/10312/9377/4704/4725/1353/4698/4715/4710/479/4702/4700/495/29796/1349/8992/23545/64077/10975/4716",
+    
+     Chemical_entrez = "6392/51079/7385/4705/6390/7384/4713/54539/1327/4723/1543/4695/1545/1350/4720/4719/7381/374291/4696/1537/1535/4712/2947/4717/5296/5337/4790/1329/9377/4704/4725/2053/1572/4698/4715/4710/221357/4025/292",
+     Diabetic_entrez = "6392/51079/7385/4705/6390/7384/4713/54539/1327/4723/4695/5162/1350/4720/4719/7381/374291/4696/1537/1535/4712/4717/5296/4790/1329/9377/4704/51660/4725/4698/4715/4710",
+     Amyotrophic_entrez = "6392/51079/7385/4705/6390/7384/4713/54539/1327/4723/54205/2876/4695/1350/4720/4719/7381/4843/374291/4696/1537/4712/4717/1329/9377/4704/4725/2878/4698/4715/4710/257202/4702/4700/29796/2904/7124/1349/493869/10975/30849/4716"
+     )
+Enrichment_KEGG_D14 <- purrr::imap_dfr(.x = Core_enrichemnt,~HUMAN_9606[Type == "Gene_Name",.(Uniprot,ID)
+                                             ][Uniprot %chin% pull(subset(Human_hsa,ID %in% unlist(str_split(.x,pattern = "/") )),"Uniprot")][,Category:= .y])
 Load_DIA_NN_peptides <- function(report_DIA_tsv_file, Samples_df){
     read_tsv(here::here("Datasets","Raw",report_DIA_tsv_file)) %>% 
         as.data.frame() %>% 
@@ -92,3 +99,23 @@ Peptide_metrics <- function(input_matrix,dataset_name){
 Peptide_matrices <- map(.x = list_files_to_analyse[1:2],
                         ~Load_DIA_NN_peptides(.x,Samples))
 walk2(Peptide_matrices,list_files_to_analyse[1:2],Peptide_metrics)
+
+#### N peaks per condition
+reports <- c("P11833_P11841_Method_1_report.tsv",
+             "P11833_P11841_Method_2_report.tsv")
+report_cols <- purrr::map_dfr(.x = reports, ~fread(input = here::here("Datasets","Raw",.x), nrows = 0)) %>% 
+    colnames() %>% str_subset("Run|RT\\.|Protein.Group")
+report_RT <- purrr::map_dfr(.x = reports, ~fread(input = here::here("Datasets","Raw",.x), select = report_cols)) %>% 
+    janitor::clean_names()
+report_RT[,`:=` (cycle_time = 3,
+                  diff = (rt_stop*60- rt_start*60),
+                 method = str_match(run, "[:graph:]*?-([:digit:]{1})")[,2],
+                 run = str_remove_all(run, "-([:digit:]{1})"))]
+report_RT[,peaks:= diff/cycle_time]
+ggplot(report_RT, aes(y = peaks, x= run, colour = run))+
+    geom_boxplot(alpha = 0.3)+
+    facet_wrap("method") + 
+    theme(axis.ticks.x = element_blank(),
+          axis.text.x = element_blank())+
+    ggtitle("Method 1 has more points per peak than method two across all samples",
+            "Calculated by Rt.stop-Rt.start (in seconds) / Cycle time (3s)")

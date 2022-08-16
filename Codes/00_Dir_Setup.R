@@ -9,6 +9,12 @@
 # installr::updateR()
 # BiocManager::install("DEP")
 # remotes::install_github("demar01/PeCorA")
+if(!"RCy3" %in% installed.packages()){
+    install.packages("BiocManager")
+    BiocManager::install("RCy3")
+}
+library(RCy3)
+library(igraph)
 pacman::p_load(piggyback, renv, here, tidyverse, targets, DEP,pheatmap,diann,PeCorA,sva,imp4p,
                org.Hs.eg.db,clusterProfiler,ggridges,usethis,
                visNetwork,matrixStats,magick,testthat, openxlsx, janitor,seqinr)
